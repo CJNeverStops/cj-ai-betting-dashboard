@@ -136,3 +136,14 @@ def calculate_hit_prob(hitter, pitcher):
         return avg * (1 - k_rate) * (1 - pitcher_k)
     except:
         return 0.2
+st.subheader("⚔️ Matchup Builder")
+
+player_name = st.selectbox("Select Batter", hitters["player_name"])
+pitcher_name = st.selectbox("Select Pitcher", pitchers["player_name"])
+
+hitter = hitters[hitters["player_name"] == player_name].iloc[0]
+pitcher = pitchers[pitchers["player_name"] == pitcher_name].iloc[0]
+
+prob = calculate_hit_prob(hitter, pitcher)
+
+st.metric("🎯 Hit Probability", f"{round(prob*100,2)}%")
