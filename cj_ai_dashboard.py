@@ -16,9 +16,6 @@ PARKS_FILE = "parks.csv"
 MATCHUPS_FILE = "today_matchups.csv"
 
 
-# =========================================================
-# LOADERS
-# =========================================================
 @st.cache_data(ttl=3600)
 def try_load(path):
     try:
@@ -39,16 +36,13 @@ def get_today_schedule():
         return pd.DataFrame(), str(e)
 
     games = []
-
     for date in data.get("dates", []):
         for g in date.get("games", []):
             try:
                 home = g["teams"]["home"]["team"]["name"]
                 away = g["teams"]["away"]["team"]["name"]
-
                 home_pitcher = g["teams"]["home"].get("probablePitcher", {}).get("fullName", "")
                 away_pitcher = g["teams"]["away"].get("probablePitcher", {}).get("fullName", "")
-
                 venue = g["venue"]["name"]
 
                 games.append(
@@ -85,9 +79,6 @@ if parks.empty:
     st.stop()
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 def norm_text(s):
     return " ".join(str(s).strip().lower().replace(",", "").split())
 
@@ -249,11 +240,11 @@ def lineup_boost(spot):
     return boosts.get(s, 1.00)
 
 
-# =========================================================
-# COLUMN MAPS
-# =========================================================
 b_name = require_col(batters, ["player_name", "name", "player", "last_name, first_name"], "batter name column")
-b_team = find_col(batters, ["team", "team_name", "tm"])
+
+# team column candidates, plus manual picker fallback
+auto_team_col = find_col(batters, ["team", "team_name", "tm", "club", "team_abbr", "teamabbr"])
+
 b_xba = find_col(batters, ["xba", "estimated_ba"])
 b_xslg = find_col(batters, ["xslg", "estimated_slg"])
 b_xwoba = find_col(batters, ["xwoba", "estimated_woba_using_speedangle"])
@@ -275,10 +266,6 @@ park_name_col = require_col(parks, ["park_name", "venue_name", "park", "venue"],
 park_hr_col = find_col(parks, ["hr_factor", "hr", "home_run", "home_runs"])
 park_hit_col = find_col(parks, ["hit_factor", "hit", "hits", "1b"])
 
-
-# =========================================================
-# CLEAN DATA
-# =========================================================
 batters = batters.copy()
 pitchers = pitchers.copy()
 parks = parks.copy()
@@ -287,22 +274,6 @@ batters["_keys"] = batters[b_name].astype(str).apply(make_name_keys)
 pitchers["_keys"] = pitchers[p_name].astype(str).apply(make_name_keys)
 parks["_park"] = parks[park_name_col].astype(str).str.strip().str.lower()
 
-if b_team:
-    batters["_team_norm"] = batters[b_team].astype(str).map(norm_text)
-else:
-    batters["_team_norm"] = ""
-
-
-# =========================================================
-# AUTO OR MANUAL MATCHUPS
-# =========================================================
-st.subheader("📅 Today's MLB Games")
-
-if schedule_df.empty:
-    st.warning(f"Could not auto-load today's schedule. {schedule_err if schedule_err else ''}")
-else:
-    st.dataframe(schedule_df, use_container_width=True)
-
 with st.sidebar:
     st.header("Board Mode")
     auto_mode = st.toggle("Auto Build Slate From MLB Schedule", value=not schedule_df.empty)
@@ -310,14 +281,32 @@ with st.sidebar:
     default_team_total = st.slider("Default team total (auto mode)", 3.0, 6.5, 4.2, 0.1)
     default_weather_boost = st.slider("Default weather boost (auto mode)", 0.90, 1.15, 1.00, 0.01)
 
+    st.header("Team Column")
+    batter_team_col = st.selectbox(
+        "Choose batter team column",
+        options=["(none)"] + list(batters.columns),
+        index=(["(none)"] + list(batters.columns)).index(auto_team_col) if auto_team_col in batters.columns else 0,
+    )
+
+st.subheader("📅 Today's MLB Games")
+if schedule_df.empty:
+    st.warning(f"Could not auto-load today's schedule. {schedule_err if schedule_err else ''}")
+else:
+    st.dataframe(schedule_df, use_container_width=True)
+
+if batter_team_col != "(none)":
+    batters["_team_norm"] = batters[batter_team_col].astype(str).map(norm_text)
+else:
+    batters["_team_norm"] = ""
+
 if auto_mode and schedule_df.empty:
     auto_mode = False
 
 if auto_mode:
     auto_rows = []
 
-    if not b_team:
-        st.warning("Auto mode works best when batters.csv has a team column. Falling back to manual matchup file.")
+    if batter_team_col == "(none)":
+        st.warning("Pick the correct team column in the sidebar so auto mode can match hitters to teams. Falling back to manual matchup file.")
         matchups = manual_matchups.copy()
     else:
         for _, game in schedule_df.iterrows():
@@ -368,6 +357,7 @@ if auto_mode:
                     )
 
         matchups = pd.DataFrame(auto_rows)
+
         if matchups.empty and not manual_matchups.empty:
             st.warning("Auto mode built zero matchup rows. Using today_matchups.csv instead.")
             matchups = manual_matchups.copy()
@@ -375,10 +365,9 @@ else:
     matchups = manual_matchups.copy()
 
 if matchups.empty:
-    st.error("No matchup rows available. Use auto mode with a team column in batters.csv, or upload today_matchups.csv.")
+    st.error("No matchup rows available. Use auto mode with a valid team column, or upload today_matchups.csv.")
     st.stop()
 
-# matchup columns
 m_batter = require_col(matchups, ["batter", "hitter", "player"], "matchups batter column")
 m_pitcher = require_col(matchups, ["pitcher"], "matchups pitcher column")
 m_park = require_col(matchups, ["park", "venue", "park_name"], "matchups park column")
@@ -393,7 +382,6 @@ m_hit_odds = find_col(matchups, ["hit_odds", "hits_odds"])
 m_hr_odds = find_col(matchups, ["hr_odds", "home_run_odds"])
 m_tb_odds = find_col(matchups, ["tb_odds", "total_bases_odds"])
 m_rbi_odds = find_col(matchups, ["rbi_odds"])
-m_k_odds = find_col(matchups, ["k_odds", "strikeout_odds"])
 
 matchups = matchups.copy()
 matchups["_batter"] = matchups[m_batter].astype(str).map(norm_text)
@@ -405,15 +393,12 @@ with st.expander("CSV / Slate Debug Info"):
     st.write("Pitchers columns:", list(pitchers.columns))
     st.write("Parks columns:", list(parks.columns))
     st.write("Matchups columns:", list(matchups.columns))
+    st.write("Chosen batter team column:", batter_team_col)
     st.write("Batters rows:", len(batters))
     st.write("Pitchers rows:", len(pitchers))
     st.write("Parks rows:", len(parks))
     st.write("Matchups rows:", len(matchups))
 
-
-# =========================================================
-# MODEL INPUT EXTRACTORS
-# =========================================================
 def get_batter_metrics(row):
     return {
         "xba": safe_float(row[b_xba], 0.240) if b_xba else 0.240,
@@ -424,7 +409,6 @@ def get_batter_metrics(row):
         "k_rate": pct_to_decimal(row[b_k], 0.22) if b_k else 0.22,
         "bb_rate": pct_to_decimal(row[b_bb], 0.08) if b_bb else 0.08,
     }
-
 
 def get_pitcher_metrics(row):
     return {
@@ -437,7 +421,6 @@ def get_pitcher_metrics(row):
         "bb_rate": pct_to_decimal(row[p_bb], 0.08) if p_bb else 0.08,
     }
 
-
 def get_park_factors(park_key):
     row = parks.loc[parks["_park"] == park_key]
     if row.empty:
@@ -447,7 +430,6 @@ def get_park_factors(park_key):
         "hr_factor": scale_park_factor(row[park_hr_col], 1.00) if park_hr_col else 1.00,
         "hit_factor": scale_park_factor(row[park_hit_col], 1.00) if park_hit_col else 1.00,
     }
-
 
 def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_hand, lineup_spot, weather_boost, team_total):
     b = get_batter_metrics(batter_row)
@@ -512,10 +494,6 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         "hit_factor": park["hit_factor"],
     }
 
-
-# =========================================================
-# BUILD BATTER BOARD
-# =========================================================
 rows = []
 skipped = []
 
@@ -599,17 +577,11 @@ if batters_df.empty:
         st.write(skipped)
     st.stop()
 
-
-# =========================================================
-# PITCHER K BOARD
-# =========================================================
 pitcher_board = []
-
 for pitcher_name, grp in batters_df.groupby("Pitcher"):
     p_match = find_name_match(pitchers, norm_text(pitcher_name))
     if p_match.empty:
         continue
-
     p_row = p_match.iloc[0]
     p = get_pitcher_metrics(p_row)
 
@@ -651,12 +623,7 @@ pitchers_df = pd.DataFrame(pitcher_board)
 if not pitchers_df.empty:
     pitchers_df = pitchers_df.sort_values("K Chance %", ascending=False).reset_index(drop=True)
 
-
-# =========================================================
-# BEST PICK BOARD
-# =========================================================
 best_pick_rows = []
-
 for _, r in batters_df.iterrows():
     options = [
         ("Hit", r["Hit %"], r["Hit Edge %"]),
@@ -665,11 +632,7 @@ for _, r in batters_df.iterrows():
         ("RBI", r["RBI %"], r["RBI Edge %"]),
     ]
 
-    ranked = sorted(
-        options,
-        key=lambda x: (x[2] if x[2] is not None else -999, x[1]),
-        reverse=True,
-    )
+    ranked = sorted(options, key=lambda x: (x[2] if x[2] is not None else -999, x[1]), reverse=True)
     best_prop, best_prob, best_edge = ranked[0]
     score = best_prob if best_edge is None else best_prob + max(best_edge, 0)
 
@@ -688,10 +651,6 @@ for _, r in batters_df.iterrows():
 
 best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Score", ascending=False).reset_index(drop=True)
 
-
-# =========================================================
-# TOP CARDS
-# =========================================================
 top_pick = best_picks_df.iloc[0]
 top_k = pitchers_df.iloc[0] if not pitchers_df.empty else None
 
@@ -701,10 +660,6 @@ c2.metric("Best Prop", top_pick["Best Prop"])
 c3.metric("Top Score", f"{top_pick['Score']}")
 c4.metric("Top Pitcher K Spot", top_k["Pitcher"] if top_k is not None else "—")
 
-
-# =========================================================
-# SECTIONS
-# =========================================================
 st.subheader("🔥 Best Rated Picks For The Day")
 st.dataframe(best_picks_df.head(15), use_container_width=True)
 
