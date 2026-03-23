@@ -7,18 +7,12 @@ st.set_page_config(page_title="CJ AI Dashboard V2", layout="wide")
 st.title("🔥 CJNeverStops AI Betting Dashboard V2")
 st.caption("Free model + matchup import + ranked picks board")
 
-# =========================================================
-# FILE LOAD
-# =========================================================
 BATTERS_FILE = "batters.csv"
 PITCHERS_FILE = "pitchers.csv"
 PARKS_FILE = "parks.csv"
 MATCHUPS_FILE = "today_matchups.csv"
 
 @st.cache_data(ttl=3600)
-def load_csv(path):
-    return pd.read_csv(path)
-
 def try_load_csv(path):
     try:
         return pd.read_csv(path), None
@@ -33,25 +27,32 @@ matchups, matchups_err = try_load_csv(MATCHUPS_FILE)
 if batters.empty:
     st.error(f"Could not load batters.csv: {batters_err}")
     st.stop()
-
 if pitchers.empty:
     st.error(f"Could not load pitchers.csv: {pitchers_err}")
     st.stop()
-
 if parks.empty:
     st.error(f"Could not load parks.csv: {parks_err}")
     st.stop()
-
 if matchups.empty:
     st.error(f"Could not load today_matchups.csv: {matchups_err}")
-    st.info("Add today_matchups.csv to your repo root.")
     st.stop()
 
-# =========================================================
-# HELPERS
-# =========================================================
 def norm_text(s):
     return " ".join(str(s).strip().lower().replace(",", "").split())
+
+def first_last_name(s):
+    s = str(s).strip()
+    if "," in s:
+        parts = [p.strip() for p in s.split(",", 1)]
+        if len(parts) == 2:
+            return f"{parts[1]} {parts[0]}".strip().lower()
+    return s.lower()
+
+def make_name_keys(s):
+    raw = str(s).strip()
+    a = norm_text(raw)
+    b = norm_text(first_last_name(raw))
+    return {a, b}
 
 def logistic(x):
     return 1 / (1 + math.exp(-x))
@@ -101,8 +102,7 @@ def find_col(df, candidates):
     for cand in candidates:
         cand_l = str(cand).strip().lower()
         for col in df.columns:
-            col_l = str(col).strip().lower()
-            if cand_l in col_l:
+            if cand_l in str(col).strip().lower():
                 return col
     return None
 
@@ -113,9 +113,6 @@ def require_col(df, candidates, label):
         st.stop()
     return col
 
-# =========================================================
-# DEBUG
-# =========================================================
 with st.expander("CSV Debug Info"):
     st.write("Batters columns:", list(batters.columns))
     st.write("Pitchers columns:", list(pitchers.columns))
@@ -126,10 +123,6 @@ with st.expander("CSV Debug Info"):
     st.write("Parks rows:", len(parks))
     st.write("Matchups rows:", len(matchups))
 
-# =========================================================
-# COLUMN MAPS
-# =========================================================
-# batters
 b_name = require_col(batters, ["player_name", "name", "player", "last_name, first_name"], "batter name column")
 b_xba = find_col(batters, ["xba", "estimated_ba"])
 b_xslg = find_col(batters, ["xslg", "estimated_slg"])
@@ -139,7 +132,6 @@ b_hardhit = find_col(batters, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
 b_k = find_col(batters, ["k_percent", "strikeout_percent", "k%"])
 b_bb = find_col(batters, ["bb_percent", "walk_percent", "bb%"])
 
-# pitchers
 p_name = require_col(pitchers, ["player_name", "name", "player", "last_name, first_name"], "pitcher name column")
 p_xba = find_col(pitchers, ["xba", "estimated_ba"])
 p_xslg = find_col(pitchers, ["xslg", "estimated_slg"])
@@ -149,12 +141,10 @@ p_hardhit = find_col(pitchers, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
 p_k = find_col(pitchers, ["k_percent", "strikeout_percent", "k%"])
 p_bb = find_col(pitchers, ["bb_percent", "walk_percent", "bb%"])
 
-# parks
 park_name_col = require_col(parks, ["park_name", "venue_name", "park", "venue"], "park name column")
 park_hr_col = find_col(parks, ["hr_factor", "hr", "home_run", "home_runs"])
 park_hit_col = find_col(parks, ["hit_factor", "hit", "hits", "1b"])
 
-# matchups
 m_batter = require_col(matchups, ["batter", "hitter", "player"], "matchup batter column")
 m_pitcher = require_col(matchups, ["pitcher"], "matchup pitcher column")
 m_park = require_col(matchups, ["park", "venue", "park_name"], "matchup park column")
@@ -163,31 +153,30 @@ m_phand = find_col(matchups, ["pitcher_hand", "p_throws", "throws"])
 m_prop = require_col(matchups, ["prop_type", "prop", "market"], "matchup prop type column")
 m_odds = require_col(matchups, ["odds", "line_odds", "american_odds"], "matchup odds column")
 
-# optional fields
 m_team = find_col(matchups, ["team"])
 m_game = find_col(matchups, ["game", "matchup"])
 m_note = find_col(matchups, ["note", "notes"])
 m_book = find_col(matchups, ["book", "sportsbook"])
 m_line = find_col(matchups, ["line"])
 
-# =========================================================
-# CLEAN DATA
-# =========================================================
 batters = batters.copy()
 pitchers = pitchers.copy()
 parks = parks.copy()
 matchups = matchups.copy()
 
-batters["_name"] = batters[b_name].astype(str).map(norm_text)
-pitchers["_name"] = pitchers[p_name].astype(str).map(norm_text)
+batters["_name_keys"] = batters[b_name].astype(str).apply(make_name_keys)
+pitchers["_name_keys"] = pitchers[p_name].astype(str).apply(make_name_keys)
 parks["_park"] = parks[park_name_col].astype(str).str.strip().str.lower()
 matchups["_batter"] = matchups[m_batter].astype(str).map(norm_text)
 matchups["_pitcher"] = matchups[m_pitcher].astype(str).map(norm_text)
 matchups["_park"] = matchups[m_park].astype(str).str.strip().str.lower()
 
-# =========================================================
-# MODEL FUNCTION
-# =========================================================
+def find_name_match(df, key):
+    matches = df[df["_name_keys"].apply(lambda s: key in s)]
+    if matches.empty:
+        return pd.DataFrame()
+    return matches
+
 def get_batter_metrics(row):
     xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
     xslg = safe_float(row[b_xslg], 0.390) if b_xslg else 0.390
@@ -281,15 +270,13 @@ def calculate_matchup(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
 
     book_prob = implied_prob(odds)
     edge = model_prob - book_prob
-    grade = grade_edge(edge)
-    confidence = confidence_score(edge, model_prob)
 
     return {
         "model_prob": model_prob,
         "book_prob": book_prob,
         "edge": edge,
-        "grade": grade,
-        "confidence": confidence,
+        "grade": grade_edge(edge),
+        "confidence": confidence_score(edge, model_prob),
         "hit_prob": hit_prob,
         "hr_prob": hr_prob,
         "k_prob": k_prob,
@@ -298,9 +285,6 @@ def calculate_matchup(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         "platoon_boost": platoon,
     }
 
-# =========================================================
-# RUN ALL MATCHUPS
-# =========================================================
 results = []
 skipped = []
 
@@ -309,8 +293,8 @@ for _, row in matchups.iterrows():
     pitcher_key = row["_pitcher"]
     park_key = row["_park"]
 
-    batter_match = batters.loc[batters["_name"] == batter_key]
-    pitcher_match = pitchers.loc[pitchers["_name"] == pitcher_key]
+    batter_match = find_name_match(batters, batter_key)
+    pitcher_match = find_name_match(pitchers, pitcher_key)
 
     if batter_match.empty:
         skipped.append(f"Batter not found: {row[m_batter]}")
@@ -339,7 +323,6 @@ for _, row in matchups.iterrows():
         pitcher_hand=pitcher_hand,
         prop_type=prop_type,
         odds=int(odds),
-        weather_boost=1.00,
     )
 
     results.append({
@@ -356,20 +339,13 @@ for _, row in matchups.iterrows():
         "Hit %": round(calc["hit_prob"] * 100, 1),
         "HR %": round(calc["hr_prob"] * 100, 1),
         "K %": round(calc["k_prob"] * 100, 1),
-        "HR Factor": round(calc["hr_factor"], 3),
-        "Hit Factor": round(calc["hit_factor"], 3),
-        "Platoon": round(calc["platoon_boost"], 2),
-        "Team": row[m_team] if m_team else "",
-        "Game": row[m_game] if m_game else "",
-        "Book": row[m_book] if m_book else "",
-        "Line": row[m_line] if m_line else "",
-        "Notes": row[m_note] if m_note else "",
     })
 
 results_df = pd.DataFrame(results)
 
 if results_df.empty:
     st.error("No valid matchup rows were processed.")
+    st.write("Most likely cause: name mismatch between today_matchups.csv and batters/pitchers files.")
     if skipped:
         st.write("Skipped rows:")
         st.write(skipped)
@@ -377,68 +353,20 @@ if results_df.empty:
 
 results_df = results_df.sort_values(by=["Edge %", "Confidence"], ascending=[False, False]).reset_index(drop=True)
 
-# =========================================================
-# TOP AREA
-# =========================================================
 top = results_df.iloc[0]
-
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Lock of the Day", top["Batter"])
 c2.metric("Best Prop", top["Prop"])
 c3.metric("Top Edge", f"{top['Edge %']}%")
 c4.metric("Confidence", top["Confidence"])
 
-# =========================================================
-# FILTERS
-# =========================================================
-st.subheader("Filters")
-
-f1, f2, f3 = st.columns(3)
-
-grade_options = sorted(results_df["Grade"].dropna().unique().tolist())
-prop_options = sorted(results_df["Prop"].dropna().astype(str).unique().tolist())
-park_options = sorted(results_df["Park"].dropna().astype(str).unique().tolist())
-
-selected_grades = f1.multiselect("Grade", grade_options, default=grade_options)
-selected_props = f2.multiselect("Prop", prop_options, default=prop_options)
-selected_parks = f3.multiselect("Park", park_options, default=park_options)
-
-filtered_df = results_df[
-    results_df["Grade"].isin(selected_grades)
-    & results_df["Prop"].astype(str).isin(selected_props)
-    & results_df["Park"].astype(str).isin(selected_parks)
-].copy()
-
-# =========================================================
-# MAIN TABLES
-# =========================================================
 st.subheader("🔥 Top 10 AI Picks")
-st.dataframe(filtered_df.head(10), use_container_width=True)
+st.dataframe(results_df.head(10), use_container_width=True)
 
-st.subheader("💰 Lock of the Day")
-st.write(top.to_dict())
-
-# =========================================================
-# HR BOMB FINDER
-# =========================================================
-hr_board = results_df[results_df["Prop"].astype(str).str.lower().isin(["home run", "hr", "homerun"])].copy()
-if not hr_board.empty:
-    hr_board = hr_board.sort_values(by=["HR %", "Edge %"], ascending=[False, False])
-    st.subheader("💣 HR Bomb Finder")
-    st.dataframe(hr_board.head(10), use_container_width=True)
-
-# =========================================================
-# FULL BOARD
-# =========================================================
 st.subheader("📊 Full Ranked Board")
-st.dataframe(filtered_df, use_container_width=True)
+st.dataframe(results_df, use_container_width=True)
 
-# =========================================================
-# SKIPPED ROWS
-# =========================================================
 if skipped:
     with st.expander("Skipped Rows / Name Mismatch Debug"):
         for item in skipped:
             st.write(item)
-
-st.info("V2 uses today_matchups.csv as the daily import board. Update that file daily for new plays.")
