@@ -1,0 +1,4 @@
+batter,pitcher,park,batter_hand,pitcher_hand,prop_type,odds
+Aaron Judge,Gerrit Cole,Yankee Stadium,R,R,Home Run,250
+Juan Soto,Corbin Burnes,Yankee Stadium,L,R,Hit,-140
+Shohei Ohtani,Yu Darvish,Dodger Stadium,L,R,Home Run,300
