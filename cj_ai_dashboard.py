@@ -127,3 +127,12 @@ def get_pitchers():
 
 hitters = get_hitters()
 pitchers = get_pitchers()
+def calculate_hit_prob(hitter, pitcher):
+    try:
+        avg = hitter["ba"]
+        k_rate = hitter["k_percent"] / 100
+        pitcher_k = pitcher["k_percent"] / 100
+
+        return avg * (1 - k_rate) * (1 - pitcher_k)
+    except:
+        return 0.2
