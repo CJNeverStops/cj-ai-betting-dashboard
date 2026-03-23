@@ -113,3 +113,17 @@ st.dataframe(df, use_container_width=True)
 ODDS_API_KEY
 get_odds()
 requests to odds api
+import pandas as pd
+
+@st.cache_data(ttl=3600)
+def get_hitters():
+    url = "https://baseballsavant.mlb.com/leaderboard/custom?year=2026&type=batter&csv=true"
+    return pd.read_csv(url)
+
+@st.cache_data(ttl=3600)
+def get_pitchers():
+    url = "https://baseballsavant.mlb.com/leaderboard/custom?year=2026&type=pitcher&csv=true"
+    return pd.read_csv(url)
+
+hitters = get_hitters()
+pitchers = get_pitchers()
