@@ -1,4 +1,4 @@
-batter,pitcher,park,batter_hand,pitcher_hand,prop_type,odds
-Aaron Judge,Gerrit Cole,Yankee Stadium,R,R,Home Run,250
-Juan Soto,Corbin Burnes,Yankee Stadium,L,R,Hit,-140
-Shohei Ohtani,Yu Darvish,Dodger Stadium,L,R,Home Run,300
+batter,pitcher,park,batter_hand,pitcher_hand,lineup_spot,team,opp_team,weather_boost,team_total,hit_odds,hr_odds,tb_odds,rbi_odds
+Aaron Judge,Garrett Crochet,Yankee Stadium,R,L,2,NYY,BOS,1.03,4.9,-155,310,115,165
+Juan Soto,Garrett Crochet,Yankee Stadium,L,L,3,NYY,BOS,1.03,4.9,-165,360,105,150
+Austin Wells,Garrett Crochet,Yankee Stadium,L,L,5,NYY,BOS,1.03,4.9,-120,550,145,210
