@@ -147,3 +147,25 @@ pitcher = pitchers[pitchers["player_name"] == pitcher_name].iloc[0]
 prob = calculate_hit_prob(hitter, pitcher)
 
 st.metric("🎯 Hit Probability", f"{round(prob*100,2)}%")
+st.subheader("💰 Edge Calculator")
+
+odds = st.number_input("Enter Odds (-110, +150, etc.)")
+
+def implied_prob(odds):
+    if odds > 0:
+        return 100 / (odds + 100)
+    else:
+        return -odds / (-odds + 100)
+
+if odds != 0:
+    book_prob = implied_prob(odds)
+    edge = prob - book_prob
+
+    st.metric("📈 Edge", f"{round(edge*100,2)}%")
+
+    if edge > 0.05:
+        st.success("🔥 STRONG BET")
+    elif edge > 0.03:
+        st.warning("⚠️ Lean")
+    else:
+        st.error("❌ Pass")
