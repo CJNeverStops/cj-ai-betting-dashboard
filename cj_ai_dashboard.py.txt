@@ -1,0 +1,74 @@
+import streamlit as st
+import requests
+import pandas as pd
+
+# ---------------- SETTINGS ----------------
+ODDS_API_KEY = "YOUR_ODDS_API_KEY"
+
+# ---------------- FUNCTIONS ----------------
+
+def get_odds():
+    url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&markets=player_props"
+    try:
+        return requests.get(url).json()
+    except:
+        return []
+
+def implied_prob(odds):
+    if odds > 0:
+        return 100 / (odds + 100)
+    else:
+        return -odds / (-odds + 100)
+
+# 🔥 SIMPLE MODEL (we’ll upgrade later)
+def model_prob():
+    return 0.30  # placeholder until stats fully integrated
+
+# ---------------- STREAMLIT UI ----------------
+
+st.set_page_config(page_title="CJ AI Betting Dashboard", layout="wide")
+
+st.title("🔥 CJNeverStops AI Betting Dashboard")
+
+# Load data
+odds_data = get_odds()
+
+picks = []
+
+for game in odds_data:
+    for book in game.get("bookmakers", []):
+        for market in book.get("markets", []):
+            for outcome in market.get("outcomes", []):
+
+                player = outcome.get("description", "Unknown")
+                odds = outcome.get("price", 0)
+
+                if odds == 0:
+                    continue
+
+                model = model_prob()
+                book_prob = implied_prob(odds)
+                edge = model - book_prob
+
+                picks.append({
+                    "Player": player,
+                    "Odds": odds,
+                    "Model %": round(model * 100, 2),
+                    "Book %": round(book_prob * 100, 2),
+                    "Edge %": round(edge * 100, 2),
+                    "Play": "🔥 BET" if edge > 0.05 else "PASS"
+                })
+
+df = pd.DataFrame(picks)
+
+# Sort best edges
+df = df.sort_values(by="Edge %", ascending=False)
+
+# ---------------- DISPLAY ----------------
+
+st.subheader("💰 Top AI Picks")
+
+st.dataframe(df.head(20), use_container_width=True)
+
+st.subheader("📊 All Props")
+st.dataframe(df, use_container_width=True)
