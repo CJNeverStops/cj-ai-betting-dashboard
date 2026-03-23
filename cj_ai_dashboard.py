@@ -110,3 +110,6 @@ st.dataframe(df.head(20), use_container_width=True)
 
 st.subheader("📊 All Props")
 st.dataframe(df, use_container_width=True)
+ODDS_API_KEY
+get_odds()
+requests to odds api
