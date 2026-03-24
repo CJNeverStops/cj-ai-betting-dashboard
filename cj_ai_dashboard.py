@@ -138,13 +138,6 @@ def logistic(x):
     return 1 / (1 + math.exp(-x))
 
 
-def implied_prob(odds):
-    odds = int(odds)
-    if odds > 0:
-        return 100 / (odds + 100)
-    return abs(odds) / (abs(odds) + 100)
-
-
 def find_col(df, candidates):
     lower_map = {str(c).strip().lower(): c for c in df.columns}
     for cand in candidates:
@@ -357,7 +350,6 @@ for game in games:
         }
     )
 
-    # Away hitters vs home pitcher
     if home_pitcher:
         if away_lineup:
             for hitter in away_lineup:
@@ -394,7 +386,6 @@ for game in games:
                     }
                 )
 
-    # Home hitters vs away pitcher
     if away_pitcher:
         if home_lineup:
             for hitter in home_lineup:
@@ -690,7 +681,18 @@ c3.metric("Top Score", f"{top_pick['Score']}")
 c4.metric("Top Pitcher K Spot", top_k["Pitcher"] if top_k is not None else "—")
 
 st.subheader("🔥 Best Rated Picks For The Day")
-st.dataframe(best_picks_df.head(15), use_container_width=True)
+
+def color_grade(val):
+    if val == "🔥 LOCK":
+        return "background-color: #ff4d4d; color: white;"
+    if val == "✅ STRONG":
+        return "background-color: #2ecc71; color: black;"
+    if val == "⚠️ LEAN":
+        return "background-color: #f1c40f; color: black;"
+    return ""
+
+styled_top = best_picks_df.head(15).style.map(color_grade, subset=["Grade"])
+st.dataframe(styled_top, use_container_width=True)
 
 st.subheader("🎯 Best Pitcher Strikeout Chances")
 if pitchers_df.empty:
@@ -722,18 +724,7 @@ st.dataframe(
     use_container_width=True,
 )
 
-with st.expander("Full Batter Board"):
-    st.dataframe(
-        batters_df.sort_values(["Best Score", "Hit %"], ascending=[False, False]),
-        use_container_width=True,
-    )
-
-if skipped:
-    with st.expander("Skipped Rows / Name Debug"):
-        for item in skipped:
-            st.write(item)
 st.subheader("🧠 Why These Picks (Top 5 Breakdown)")
-
 top5 = best_picks_df.head(5)
 
 for _, r in top5.iterrows():
@@ -744,23 +735,32 @@ for _, r in top5.iterrows():
     p = get_pitcher_metrics(pitcher_row)
 
     st.markdown(f"### 🔥 {r['Player']} ({r['Best Prop']})")
-
     st.write(f"""
-    **Matchup:** vs {r['Pitcher']}  
-    **Park:** {r['Park']}  
+**Matchup:** vs {r['Pitcher']}  
+**Park:** {r['Park']}
 
-    **Why the model likes this:**
-    - Batter xBA: {round(b['xba'],3)}
-    - Batter xSLG: {round(b['xslg'],3)}
-    - Barrel Rate: {round(b['barrel']*100,1)}%
-    - Hard Hit %: {round(b['hardhit']*100,1)}%
+**Why the model likes this:**
+- Batter xBA: {round(b['xba'], 3)}
+- Batter xSLG: {round(b['xslg'], 3)}
+- Barrel Rate: {round(b['barrel'] * 100, 1)}%
+- Hard Hit %: {round(b['hardhit'] * 100, 1)}%
 
-    - Pitcher xBA allowed: {round(p['xba'],3)}
-    - Pitcher xSLG allowed: {round(p['xslg'],3)}
-    - Pitcher K%: {round(p['k_rate']*100,1)}%
+- Pitcher xBA allowed: {round(p['xba'], 3)}
+- Pitcher xSLG allowed: {round(p['xslg'], 3)}
+- Pitcher K%: {round(p['k_rate'] * 100, 1)}%
 
-    **Model Score:** {r['Score']}  
-    **Grade:** {r['Grade']}
-    """)
-
+**Model Score:** {r['Score']}  
+**Grade:** {r['Grade']}
+""")
     st.divider()
+
+with st.expander("Full Batter Board"):
+    st.dataframe(
+        batters_df.sort_values(["Best Score", "Hit %"], ascending=[False, False]),
+        use_container_width=True,
+    )
+
+if skipped:
+    with st.expander("Skipped Rows / Name Debug"):
+        for item in skipped:
+            st.write(item)
