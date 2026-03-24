@@ -31,6 +31,31 @@ with st.expander("How to Read the Model", expanded=True):
 - **RBI %** = 20%
 - **HR %** = 10%
 
+Think of it as a matchup strength score, not a guaranteed winner.
+"""
+    )
+with st.expander("How to Read the Model", expanded=True):
+    st.markdown(
+        """
+### Model Score Guide
+- **70+** = elite spot
+- **65–69** = top play
+- **55–64** = good play
+- **45–54** = fringe play
+- **under 45** = pass
+
+### Grade Key
+- **🔥 LOCK** = 65+
+- **✅ STRONG** = 55–64
+- **⚠️ LEAN** = 45–54
+- **❌ PASS** = under 45
+
+### What goes into Model Score
+- **Hit %** = 40%
+- **TB %** = 30%
+- **RBI %** = 20%
+- **HR %** = 10%
+
 Think of it as an overall matchup-quality score, not a guaranteed winner.
 """
     )
