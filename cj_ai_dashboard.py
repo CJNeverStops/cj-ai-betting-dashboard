@@ -94,6 +94,32 @@ def get_game_lineups(game_pk):
     }
 
 
+@st.cache_data(ttl=86400)
+def get_mlb_roster_map():
+    teams_url = "https://statsapi.mlb.com/api/v1/teams?sportId=1"
+    try:
+        teams = requests.get(teams_url, timeout=20).json()["teams"]
+    except Exception:
+        return {}
+
+    player_team = {}
+    for team in teams:
+        team_id = team["id"]
+        team_abbr = team["abbreviation"]
+
+        roster_url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster"
+        try:
+            roster = requests.get(roster_url, timeout=20).json()["roster"]
+        except Exception:
+            continue
+
+        for p in roster:
+            name = p["person"]["fullName"]
+            player_team[norm_text(name)] = team_abbr
+
+    return player_team
+
+
 def norm_text(s):
     return " ".join(str(s).strip().lower().replace(",", "").split())
 
@@ -297,6 +323,15 @@ batters["_keys"] = batters[b_name].astype(str).apply(make_name_keys)
 pitchers["_keys"] = pitchers[p_name].astype(str).apply(make_name_keys)
 parks["_park"] = parks[park_name_col].astype(str).str.strip().str.lower()
 
+# auto add team data from MLB rosters
+roster_map = get_mlb_roster_map()
+
+def find_team(name):
+    return roster_map.get(norm_text(name), "")
+
+batters["_team_auto"] = batters[b_name].astype(str).apply(find_team)
+batters["_team_norm"] = batters["_team_auto"].map(norm_text)
+
 with st.sidebar:
     st.header("Auto Slate")
     weather_boost_default = st.slider("Default weather boost", 0.90, 1.15, 1.00, 0.01)
@@ -304,14 +339,14 @@ with st.sidebar:
     show_unconfirmed = st.toggle("Show fallback team hitters when lineups aren't posted", value=True)
     team_col_pick = st.selectbox(
         "Batter team column",
-        options=["(none)"] + list(batters.columns),
-        index=(["(none)"] + list(batters.columns)).index(b_team) if b_team in batters.columns else 0,
+        options=["_team_auto"] + [c for c in batters.columns if c != "_team_auto"],
+        index=0,
     )
 
-if team_col_pick != "(none)":
-    batters["_team_norm"] = batters[team_col_pick].astype(str).map(norm_text)
+if team_col_pick == "_team_auto":
+    batters["_team_norm"] = batters["_team_auto"].map(norm_text)
 else:
-    batters["_team_norm"] = ""
+    batters["_team_norm"] = batters[team_col_pick].astype(str).map(norm_text)
 
 games, games_err = get_today_schedule()
 
@@ -367,7 +402,7 @@ for game in games:
                         "team_total": team_total_default,
                     }
                 )
-        elif show_unconfirmed and team_col_pick != "(none)":
+        elif show_unconfirmed:
             away_vals = get_team_match_values(away_team)
             away_hitters = batters[batters["_team_norm"].isin(away_vals)]
             for _, batter_row in away_hitters.iterrows():
@@ -403,7 +438,7 @@ for game in games:
                         "team_total": team_total_default,
                     }
                 )
-        elif show_unconfirmed and team_col_pick != "(none)":
+        elif show_unconfirmed:
             home_vals = get_team_match_values(home_team)
             home_hitters = batters[batters["_team_norm"].isin(home_vals)]
             for _, batter_row in home_hitters.iterrows():
@@ -425,7 +460,7 @@ for game in games:
 matchups = pd.DataFrame(auto_rows)
 
 if matchups.empty:
-    st.error("Auto slate built zero rows. Pick the correct batter team column in the sidebar, or wait until lineups are posted.")
+    st.error("Auto slate built zero rows. Wait for lineups to post, or let the MLB roster team auto-matching finish matching your hitters.")
     st.stop()
 
 matchups["_batter"] = matchups["batter"].astype(str).map(norm_text)
@@ -440,6 +475,7 @@ with st.expander("Debug Info"):
     st.write("Pitchers columns:", list(pitchers.columns))
     st.write("Parks columns:", list(parks.columns))
     st.write("Chosen team column:", team_col_pick)
+    st.write("Auto team matches:", int((batters["_team_auto"] != "").sum()))
     st.write("Batters rows:", len(batters))
     st.write("Pitchers rows:", len(pitchers))
     st.write("Parks rows:", len(parks))
