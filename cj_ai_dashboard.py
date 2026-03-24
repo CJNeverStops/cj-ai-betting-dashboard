@@ -732,3 +732,35 @@ if skipped:
     with st.expander("Skipped Rows / Name Debug"):
         for item in skipped:
             st.write(item)
+st.subheader("🧠 Why These Picks (Top 5 Breakdown)")
+
+top5 = best_picks_df.head(5)
+
+for _, r in top5.iterrows():
+    batter_row = batters[batters["_keys"].apply(lambda s: norm_text(r["Player"]) in s)].iloc[0]
+    pitcher_row = pitchers[pitchers["_keys"].apply(lambda s: norm_text(r["Pitcher"]) in s)].iloc[0]
+
+    b = get_batter_metrics(batter_row)
+    p = get_pitcher_metrics(pitcher_row)
+
+    st.markdown(f"### 🔥 {r['Player']} ({r['Best Prop']})")
+
+    st.write(f"""
+    **Matchup:** vs {r['Pitcher']}  
+    **Park:** {r['Park']}  
+
+    **Why the model likes this:**
+    - Batter xBA: {round(b['xba'],3)}
+    - Batter xSLG: {round(b['xslg'],3)}
+    - Barrel Rate: {round(b['barrel']*100,1)}%
+    - Hard Hit %: {round(b['hardhit']*100,1)}%
+
+    - Pitcher xBA allowed: {round(p['xba'],3)}
+    - Pitcher xSLG allowed: {round(p['xslg'],3)}
+    - Pitcher K%: {round(p['k_rate']*100,1)}%
+
+    **Model Score:** {r['Score']}  
+    **Grade:** {r['Grade']}
+    """)
+
+    st.divider()
