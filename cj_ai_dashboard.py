@@ -23,6 +23,27 @@ def try_load_csv(path):
         return pd.DataFrame(), str(e)
 
 
+def norm_text(s):
+    return " ".join(str(s).strip().lower().replace(",", "").split())
+
+
+def first_last_name(s):
+    s = str(s).strip()
+    if "," in s:
+        parts = [p.strip() for p in s.split(",", 1)]
+        if len(parts) == 2:
+            return f"{parts[1]} {parts[0]}".strip()
+    return s
+
+
+def make_name_keys(s):
+    raw = str(s).strip()
+    return {
+        norm_text(raw),
+        norm_text(first_last_name(raw)),
+    }
+
+
 @st.cache_data(ttl=1800)
 def get_today_schedule():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -115,30 +136,12 @@ def get_mlb_roster_map():
 
         for p in roster:
             name = p["person"]["fullName"]
-            player_team[norm_text(name)] = team_abbr
+            full_key = norm_text(name)
+            rev_key = norm_text(first_last_name(name))
+            player_team[full_key] = team_abbr
+            player_team[rev_key] = team_abbr
 
     return player_team
-
-
-def norm_text(s):
-    return " ".join(str(s).strip().lower().replace(",", "").split())
-
-
-def first_last_name(s):
-    s = str(s).strip()
-    if "," in s:
-        parts = [p.strip() for p in s.split(",", 1)]
-        if len(parts) == 2:
-            return f"{parts[1]} {parts[0]}".strip()
-    return s
-
-
-def make_name_keys(s):
-    raw = str(s).strip()
-    return {
-        norm_text(raw),
-        norm_text(first_last_name(raw)),
-    }
 
 
 def safe_float(v, default=0.0):
@@ -323,11 +326,13 @@ batters["_keys"] = batters[b_name].astype(str).apply(make_name_keys)
 pitchers["_keys"] = pitchers[p_name].astype(str).apply(make_name_keys)
 parks["_park"] = parks[park_name_col].astype(str).str.strip().str.lower()
 
-# auto add team data from MLB rosters
 roster_map = get_mlb_roster_map()
 
 def find_team(name):
-    return roster_map.get(norm_text(name), "")
+    raw = str(name).strip()
+    key1 = norm_text(raw)
+    key2 = norm_text(first_last_name(raw))
+    return roster_map.get(key1, roster_map.get(key2, ""))
 
 batters["_team_auto"] = batters[b_name].astype(str).apply(find_team)
 batters["_team_norm"] = batters["_team_auto"].map(norm_text)
