@@ -130,16 +130,6 @@ def grade_from_score(score: float) -> str:
     return "❌ PASS"
 
 
-def color_grade(val: str) -> str:
-    if val == "🔥 LOCK":
-        return "background-color: #ff4d4d; color: white;"
-    if val == "✅ STRONG":
-        return "background-color: #2ecc71; color: black;"
-    if val == "⚠️ LEAN":
-        return "background-color: #f1c40f; color: black;"
-    return ""
-
-
 def team_abbrev_map():
     return {
         "arizona diamondbacks": "ARI",
@@ -598,6 +588,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     team_total_v = safe_float(team_total, 4.2)
     team_total_mult = min(max(team_total_v / 4.2, 0.85), 1.20)
 
+    # Per-PA contact-based hit probability
     hit_score_raw = (
         2.2 * (b["xba"] - 0.240)
         + 1.1 * (b["xwoba"] - 0.310)
@@ -606,8 +597,13 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         - 1.8 * (p["k_rate"] - 0.22)
         - 1.3 * (p["xba"] - 0.240)
     )
-    hit_prob = logistic(-1.20 + hit_score_raw) * park["hit_factor"] * platoon * lineup_mult
-    hit_prob = min(max(hit_prob, 0.03), 0.92)
+    hit_prob_pa = logistic(-1.20 + hit_score_raw) * park["hit_factor"] * platoon
+    hit_prob_pa = min(max(hit_prob_pa, 0.03), 0.75)
+
+    # Convert per-PA hit probability to game-level "to record a hit"
+    estimated_pa = min(max(3.4 * lineup_mult, 3.2), 5.0)
+    hit_prob = 1 - (1 - hit_prob_pa) ** estimated_pa
+    hit_prob = min(max(hit_prob, 0.10), 0.95)
 
     hr_score_raw = (
         4.5 * (b["xslg"] - 0.390)
