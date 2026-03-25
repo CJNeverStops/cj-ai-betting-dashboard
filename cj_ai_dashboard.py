@@ -588,7 +588,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     team_total_v = safe_float(team_total, 4.2)
     team_total_mult = min(max(team_total_v / 4.2, 0.85), 1.20)
 
-    # Per-PA contact-based hit probability
+    # Per-PA hit signal
     hit_score_raw = (
         2.2 * (b["xba"] - 0.240)
         + 1.1 * (b["xwoba"] - 0.310)
@@ -600,7 +600,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     hit_prob_pa = logistic(-1.20 + hit_score_raw) * park["hit_factor"] * platoon
     hit_prob_pa = min(max(hit_prob_pa, 0.03), 0.75)
 
-    # Convert per-PA hit probability to game-level "to record a hit"
+    # Convert to game-level probability for 1+ hit
     estimated_pa = min(max(3.4 * lineup_mult, 3.2), 5.0)
     hit_prob = 1 - (1 - hit_prob_pa) ** estimated_pa
     hit_prob = min(max(hit_prob, 0.10), 0.95)
@@ -653,6 +653,28 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         "hit_factor": park["hit_factor"],
         "weighted_score": weighted_score,
     }
+
+
+def project_pitcher_ks(pitcher_row, opp_batters):
+    p = get_pitcher_metrics(pitcher_row)
+
+    if opp_batters:
+        avg_b_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
+    else:
+        avg_b_k = 0.22
+
+    base_k_rate = (p["k_rate"] + avg_b_k) / 2
+    batters_faced = 24
+    expected_ks = base_k_rate * batters_faced
+
+    return expected_ks
+
+
+def prob_over_k_line(expected_ks, line):
+    std_dev = 1.8
+    z = (expected_ks - line) / std_dev
+    return 1 / (1 + math.exp(-1.7 * z))
+
 
 # Build batter board
 rows = []
@@ -745,7 +767,7 @@ for _, r in batters_df.iterrows():
 
 best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Model Score", ascending=False).reset_index(drop=True)
 
-# Pitcher K board
+# Pitcher K board with multiple lines
 pitcher_board = []
 for pitcher_name, grp in batters_df.groupby("Pitcher"):
     p_match = find_name_match(pitchers, norm_text(pitcher_name))
@@ -753,7 +775,6 @@ for pitcher_name, grp in batters_df.groupby("Pitcher"):
         continue
 
     p_row = p_match.iloc[0]
-    p = get_pitcher_metrics(p_row)
 
     opp_batters = []
     for _, r in grp.iterrows():
@@ -761,38 +782,29 @@ for pitcher_name, grp in batters_df.groupby("Pitcher"):
         if not bm.empty:
             opp_batters.append(get_batter_metrics(bm.iloc[0]))
 
-    if opp_batters:
-        avg_b_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
-        avg_b_bb = sum(x["bb_rate"] for x in opp_batters) / len(opp_batters)
-        avg_b_xba = sum(x["xba"] for x in opp_batters) / len(opp_batters)
-    else:
-        avg_b_k, avg_b_bb, avg_b_xba = 0.22, 0.08, 0.240
+    expected_ks = project_pitcher_ks(p_row, opp_batters)
 
-    k_score_raw = (
-        3.0 * (p["k_rate"] - 0.22)
-        + 2.2 * (avg_b_k - 0.22)
-        - 0.8 * (avg_b_bb - 0.08)
-        - 1.1 * (avg_b_xba - 0.240)
-    )
-    k_prob = logistic(-0.10 + k_score_raw)
-    k_prob = min(max(k_prob, 0.05), 0.85)
+    prob_45 = prob_over_k_line(expected_ks, 4.5)
+    prob_55 = prob_over_k_line(expected_ks, 5.5)
+    prob_65 = prob_over_k_line(expected_ks, 6.5)
 
     pitcher_board.append(
         {
             "Pitcher": pitcher_name,
             "Opponent": grp["Team"].iloc[0] if "Team" in grp.columns else "",
-            "K Chance %": round(k_prob * 100, 1),
-            "Fair Odds": prob_to_fair_american(k_prob),
-            "Avg Opp Hit %": round(grp["Hit %"].mean(), 1),
-            "Avg Opp HR %": round(grp["HR %"].mean(), 1),
-            "Avg Opp TB %": round(grp["TB %"].mean(), 1),
-            "Grade": grade_from_score(k_prob * 100),
+            "Proj Ks": round(expected_ks, 2),
+            "Over 4.5 %": round(prob_45 * 100, 1),
+            "Over 4.5 Fair": prob_to_fair_american(prob_45),
+            "Over 5.5 %": round(prob_55 * 100, 1),
+            "Over 5.5 Fair": prob_to_fair_american(prob_55),
+            "Over 6.5 %": round(prob_65 * 100, 1),
+            "Over 6.5 Fair": prob_to_fair_american(prob_65),
         }
     )
 
 pitchers_df = pd.DataFrame(pitcher_board)
 if not pitchers_df.empty:
-    pitchers_df = pitchers_df.sort_values("K Chance %", ascending=False).reset_index(drop=True)
+    pitchers_df = pitchers_df.sort_values("Proj Ks", ascending=False).reset_index(drop=True)
 
 top_pick = best_picks_df.iloc[0]
 top_k = pitchers_df.iloc[0] if not pitchers_df.empty else None
@@ -803,14 +815,14 @@ c2.metric("Best Prop", top_pick["Best Prop"])
 c3.metric("Top Score", f"{top_pick['Model Score']}")
 c4.metric("Top Pitcher K Spot", top_k["Pitcher"] if top_k is not None else "—")
 
-# Manual odds checker
-st.subheader("💰 Quick Odds Checker")
+# Hitter odds checker
+st.subheader("💰 Hitter Quick Odds Checker")
 
 checker_cols = st.columns(4)
 checker_player = checker_cols[0].selectbox("Player", best_picks_df["Player"].tolist())
 checker_prop = checker_cols[1].selectbox("Prop", ["Hit", "Home Run", "Total Bases", "RBI"])
 checker_odds_text = checker_cols[2].text_input("Book Odds", value="+150")
-run_check = checker_cols[3].button("Check Edge")
+run_check = checker_cols[3].button("Check Hitter Edge")
 
 player_row = batters_df[batters_df["Batter"] == checker_player].iloc[0]
 
@@ -843,6 +855,46 @@ if run_check:
         st.write(f"**Verdict:** {edge_grade(edge_pct)}")
     except Exception:
         st.warning("Enter odds like +150 or -120")
+
+# Pitcher odds checker
+st.subheader("🎯 Pitcher K Odds Checker")
+
+if not pitchers_df.empty:
+    p_cols = st.columns(4)
+    pitcher_name_check = p_cols[0].selectbox("Pitcher", pitchers_df["Pitcher"].tolist())
+    k_line_check = p_cols[1].selectbox("K Line", ["Over 4.5", "Over 5.5", "Over 6.5"])
+    pitcher_odds_text = p_cols[2].text_input("Pitcher Book Odds", value="-110")
+    run_pitcher_check = p_cols[3].button("Check Pitcher Edge")
+
+    p_row = pitchers_df[pitchers_df["Pitcher"] == pitcher_name_check].iloc[0]
+
+    line_to_prob = {
+        "Over 4.5": p_row["Over 4.5 %"],
+        "Over 5.5": p_row["Over 5.5 %"],
+        "Over 6.5": p_row["Over 6.5 %"],
+    }
+    line_to_fair = {
+        "Over 4.5": p_row["Over 4.5 Fair"],
+        "Over 5.5": p_row["Over 5.5 Fair"],
+        "Over 6.5": p_row["Over 6.5 Fair"],
+    }
+
+    if run_pitcher_check:
+        try:
+            user_odds = int(pitcher_odds_text.strip())
+            implied = implied_prob_from_american(user_odds) * 100
+            model_pct = line_to_prob[k_line_check]
+            edge_pct = model_pct - implied
+
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("Model %", f"{model_pct:.1f}%")
+            pc2.metric("Book Implied %", f"{implied:.1f}%")
+            pc3.metric("Edge %", f"{edge_pct:.1f}%")
+            pc4.metric("Fair Odds", str(line_to_fair[k_line_check]))
+
+            st.write(f"**Verdict:** {edge_grade(edge_pct)}")
+        except Exception:
+            st.warning("Enter odds like +150 or -120")
 
 # Main boards
 st.subheader("🔥 Best Rated Picks For The Day")
