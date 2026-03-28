@@ -8,32 +8,42 @@ import streamlit as st
 
 st.set_page_config(page_title="CJ Daily MLB AI Board", layout="wide")
 
+# =========================================================
+# HEADER
+# =========================================================
 st.title("🔥 CJNeverStops Daily MLB AI Board")
-st.caption("Daily MLB projections for hitters and pitchers with fair odds and edge checkers")
+st.caption("Conservative MLB projection board for hitters and pitchers")
 
-with st.expander("How to Read the Model", expanded=True):
+with st.expander("How to Read This Board", expanded=True):
     st.markdown(
         """
-### Model Score Guide
-- **70+** = elite spot
-- **65–69** = top play
-- **55–64** = good play
-- **45–54** = fringe play
-- **under 45** = pass
+### What this is good for
+- Ranking the **best spots on the slate**
+- Comparing **your fair odds** vs the sportsbook
+- Finding **stronger relative plays**
 
-### Grade Key
-- **🔥 LOCK** = 65+
-- **✅ STRONG** = 55–64
-- **⚠️ LEAN** = 45–54
-- **❌ PASS** = under 45
+### What this is NOT
+- A guarantee engine
+- A perfect sportsbook clone
+- A reason to bet every top-ranked play
 
-### What goes into Model Score
+### Grade guide
+Grades are based on **relative ranking on today's slate**, not fake certainty:
+- **🔥 LOCK** = top tier on today's board
+- **✅ STRONG** = strong spot
+- **⚠️ LEAN** = playable but weaker
+- **❌ PASS** = weaker relative spot
+
+### Model Score weights
 - **Hit %** = 40%
 - **TB %** = 30%
 - **RBI %** = 20%
 - **HR %** = 10%
 
-Use it as an overall matchup-strength score, then compare your model price to the book.
+### Best use
+1. Find top-ranked spots
+2. Compare fair odds to book odds
+3. Bet only when the book price is better than your fair price
 """
     )
 
@@ -43,7 +53,7 @@ PARKS_FILE = "parks.csv"
 
 
 # =========================================================
-# GENERIC HELPERS
+# HELPERS
 # =========================================================
 @st.cache_data(ttl=3600)
 def try_load_csv(path: str) -> Tuple[pd.DataFrame, Optional[str]]:
@@ -128,16 +138,6 @@ def scale_park_factor(value, default: float = 1.0) -> float:
     return x / 100.0 if x > 3 else x
 
 
-def grade_from_score(score: float) -> str:
-    if score >= 65:
-        return "🔥 LOCK"
-    if score >= 55:
-        return "✅ STRONG"
-    if score >= 45:
-        return "⚠️ LEAN"
-    return "❌ PASS"
-
-
 def implied_prob_from_american(odds: int) -> float:
     if odds > 0:
         return 100 / (odds + 100)
@@ -168,15 +168,15 @@ def estimate_plate_appearances(lineup_spot) -> float:
     except Exception:
         return 4.2
     pa_map = {
-        1: 4.9,
-        2: 4.8,
-        3: 4.7,
-        4: 4.6,
-        5: 4.5,
-        6: 4.3,
-        7: 4.2,
-        8: 4.0,
-        9: 3.8,
+        1: 4.85,
+        2: 4.75,
+        3: 4.65,
+        4: 4.55,
+        5: 4.45,
+        6: 4.30,
+        7: 4.15,
+        8: 4.00,
+        9: 3.85,
     }
     return pa_map.get(s, 4.2)
 
@@ -187,12 +187,12 @@ def lineup_boost(lineup_spot) -> float:
     except Exception:
         return 1.00
     boosts = {
-        1: 1.05,
-        2: 1.06,
-        3: 1.08,
-        4: 1.10,
-        5: 1.06,
-        6: 1.02,
+        1: 1.04,
+        2: 1.05,
+        3: 1.07,
+        4: 1.09,
+        5: 1.05,
+        6: 1.01,
         7: 0.98,
         8: 0.95,
         9: 0.93,
@@ -206,15 +206,15 @@ def rbi_lineup_boost(lineup_spot) -> float:
     except Exception:
         return 1.00
     boost_map = {
-        1: 0.88,
-        2: 0.96,
-        3: 1.12,
-        4: 1.18,
-        5: 1.10,
+        1: 0.86,
+        2: 0.95,
+        3: 1.10,
+        4: 1.16,
+        5: 1.08,
         6: 1.00,
-        7: 0.92,
-        8: 0.86,
-        9: 0.80,
+        7: 0.93,
+        8: 0.88,
+        9: 0.82,
     }
     return boost_map.get(s, 1.00)
 
@@ -223,7 +223,7 @@ def platoon_boost(batter_hand, pitcher_hand) -> float:
     bh = str(batter_hand).strip().upper()
     ph = str(pitcher_hand).strip().upper()
     if bh in ["L", "R"] and ph in ["L", "R"]:
-        return 1.03 if bh != ph else 0.97
+        return 1.03 if bh != ph else 0.98
     return 1.00
 
 
@@ -275,6 +275,29 @@ def find_name_match(df: pd.DataFrame, key: str):
     return df[df["_keys"].apply(lambda s: key in s)]
 
 
+def apply_relative_grades(df: pd.DataFrame, score_col: str, out_col: str) -> pd.DataFrame:
+    df = df.copy()
+    if len(df) < 4:
+        df[out_col] = "✅ STRONG"
+        return df
+
+    q90 = df[score_col].quantile(0.90)
+    q65 = df[score_col].quantile(0.65)
+    q35 = df[score_col].quantile(0.35)
+
+    def _grade(x):
+        if x >= q90:
+            return "🔥 LOCK"
+        if x >= q65:
+            return "✅ STRONG"
+        if x >= q35:
+            return "⚠️ LEAN"
+        return "❌ PASS"
+
+    df[out_col] = df[score_col].apply(_grade)
+    return df
+
+
 # =========================================================
 # MLB API HELPERS
 # =========================================================
@@ -293,11 +316,17 @@ def get_today_schedule():
     for d in data.get("dates", []):
         for g in d.get("games", []):
             try:
+                away_team = g["teams"]["away"]["team"]["name"]
+                home_team = g["teams"]["home"]["team"]["name"]
+
+                if norm_text(away_team) not in team_abbrev_map() or norm_text(home_team) not in team_abbrev_map():
+                    continue
+
                 games.append(
                     {
                         "gamePk": g.get("gamePk"),
-                        "away_team": g["teams"]["away"]["team"]["name"],
-                        "home_team": g["teams"]["home"]["team"]["name"],
+                        "away_team": away_team,
+                        "home_team": home_team,
                         "away_pitcher": g["teams"]["away"].get("probablePitcher", {}).get("fullName", ""),
                         "home_pitcher": g["teams"]["home"].get("probablePitcher", {}).get("fullName", ""),
                         "park": g["venue"]["name"],
@@ -361,7 +390,6 @@ def get_mlb_roster_map():
     for team in teams:
         team_id = team["id"]
         team_abbr = team["abbreviation"]
-
         roster_url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster"
         try:
             roster = requests.get(roster_url, timeout=20).json()["roster"]
@@ -648,74 +676,73 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     park = get_park_factors(park_key)
 
     platoon = platoon_boost(batter_hand, pitcher_hand)
-    lineup_mult = lineup_boost(lineup_spot)
     weather_mult = safe_float(weather_boost, 1.00)
     team_total_v = safe_float(team_total, 4.2)
-    team_total_mult = clamp(team_total_v / 4.2, 0.85, 1.20)
+    team_total_mult = clamp(team_total_v / 4.2, 0.88, 1.15)
     plate_appearances = estimate_plate_appearances(lineup_spot)
 
-    # HIT: per-PA signal to full-game 1+ hit probability
+    # Hit model
     hit_score_raw = (
-        2.2 * (b["xba"] - 0.240)
-        + 1.1 * (b["xwoba"] - 0.310)
-        + 0.7 * (b["hardhit"] - 0.38)
-        - 1.0 * (b["k_rate"] - 0.22)
-        - 1.8 * (p["k_rate"] - 0.22)
-        - 1.3 * (p["xba"] - 0.240)
+        1.9 * (b["xba"] - 0.240)
+        + 0.9 * (b["xwoba"] - 0.310)
+        + 0.5 * (b["hardhit"] - 0.38)
+        - 0.9 * (b["k_rate"] - 0.22)
+        - 1.3 * (p["k_rate"] - 0.22)
+        - 1.0 * (p["xba"] - 0.240)
     )
-    hit_prob_pa = logistic(-1.20 + hit_score_raw) * park["hit_factor"] * platoon
-    hit_prob_pa = clamp(hit_prob_pa, 0.03, 0.75)
+    hit_prob_pa = logistic(-1.35 + hit_score_raw) * park["hit_factor"] * platoon
+    hit_prob_pa = clamp(hit_prob_pa, 0.025, 0.55)
     hit_prob = 1 - (1 - hit_prob_pa) ** plate_appearances
-    hit_prob = clamp(hit_prob, 0.10, 0.95)
+    hit_prob = clamp(hit_prob, 0.18, 0.88)
 
-    # HR: full-game HR chance
+    # HR model
     hr_score_raw = (
-        5.2 * (b["xslg"] - 0.390)
-        + 3.0 * (b["barrel"] - 0.08)
-        + 1.6 * (b["hardhit"] - 0.38)
-        + 2.8 * (p["xslg"] - 0.390)
-        + 2.0 * (p["barrel"] - 0.08)
-        + pitcher_hr_tendency(p)
+        4.2 * (b["xslg"] - 0.390)
+        + 2.6 * (b["barrel"] - 0.08)
+        + 1.2 * (b["hardhit"] - 0.38)
+        + 2.1 * (p["xslg"] - 0.390)
+        + 1.4 * (p["barrel"] - 0.08)
+        + 0.8 * pitcher_hr_tendency(p)
     )
-    hr_prob_pa = logistic(-3.25 + hr_score_raw)
+    hr_prob_pa = logistic(-3.9 + hr_score_raw)
     hr_prob = 1 - (1 - hr_prob_pa) ** plate_appearances
     hr_prob *= park["hr_factor"]
     hr_prob *= weather_mult
     hr_prob *= platoon
-    hr_prob = clamp(hr_prob, 0.01, 0.60)
+    hr_prob = clamp(hr_prob, 0.01, 0.28)
 
-    # TB: full-game total bases probability
+    # TB model
     tb_score_raw = (
-        3.4 * (b["xslg"] - 0.390)
-        + 1.8 * (b["xba"] - 0.240)
-        + 1.8 * (b["hardhit"] - 0.38)
-        + 1.5 * (b["barrel"] - 0.08)
-        + 1.9 * (p["xslg"] - 0.390)
-        + 0.8 * (p["xba"] - 0.240)
+        2.6 * (b["xslg"] - 0.390)
+        + 1.2 * (b["xba"] - 0.240)
+        + 1.1 * (b["hardhit"] - 0.38)
+        + 0.8 * (b["barrel"] - 0.08)
+        + 1.4 * (p["xslg"] - 0.390)
+        + 0.5 * (p["xba"] - 0.240)
     )
-    tb_prob_pa = logistic(-1.45 + tb_score_raw)
-    tb_prob_pa = clamp(tb_prob_pa, 0.03, 0.65)
+    tb_prob_pa = logistic(-2.2 + tb_score_raw)
+    tb_prob_pa = clamp(tb_prob_pa, 0.02, 0.40)
     tb_prob = 1 - (1 - tb_prob_pa) ** (plate_appearances * 0.92)
     tb_prob *= park["hit_factor"]
-    tb_prob *= (park["hr_factor"] ** 0.35)
+    tb_prob *= (park["hr_factor"] ** 0.20)
     tb_prob *= platoon
-    tb_prob = clamp(tb_prob, 0.05, 0.92)
+    tb_prob = clamp(tb_prob, 0.10, 0.72)
 
-    # RBI: full-game RBI probability
+    # RBI model
     rbi_score_raw = (
-        2.3 * (b["xwoba"] - 0.310)
-        + 2.4 * (b["xslg"] - 0.390)
-        + 1.3 * (b["hardhit"] - 0.38)
-        + 1.1 * (p["xwoba"] - 0.310)
+        1.9 * (b["xwoba"] - 0.310)
+        + 1.8 * (b["xslg"] - 0.390)
+        + 0.8 * (b["hardhit"] - 0.38)
+        + 0.8 * (p["xwoba"] - 0.310)
     )
-    rbi_prob_pa = logistic(-2.10 + rbi_score_raw)
-    rbi_prob_pa = clamp(rbi_prob_pa, 0.02, 0.45)
+    rbi_prob_pa = logistic(-2.55 + rbi_score_raw)
+    rbi_prob_pa = clamp(rbi_prob_pa, 0.015, 0.28)
     rbi_prob = 1 - (1 - rbi_prob_pa) ** (plate_appearances * 0.95)
     rbi_prob *= park["hit_factor"]
     rbi_prob *= team_total_mult
     rbi_prob *= platoon
     rbi_prob *= rbi_lineup_boost(lineup_spot)
-    rbi_prob = clamp(rbi_prob, 0.03, 0.88)
+    rbi_prob = clamp(rbi_prob, 0.06, 0.58)
 
     weighted_score = (
         hit_prob * 0.40
@@ -751,35 +778,34 @@ def project_pitcher_ks(pitcher_row, opp_batters):
         avg_opp_bb = 0.08
         avg_opp_xwoba = 0.310
 
-    # More differentiated strikeout expectation
     effective_k_rate = (
-        0.58 * p["k_rate"]
-        + 0.42 * avg_opp_k
-        - 0.18 * (avg_opp_bb - 0.08)
-        - 0.12 * (avg_opp_xwoba - 0.310)
-        - 0.12 * (p["bb_rate"] - 0.08)
-        - 0.10 * (p["xwoba"] - 0.310)
+        0.60 * p["k_rate"]
+        + 0.40 * avg_opp_k
+        - 0.16 * (avg_opp_bb - 0.08)
+        - 0.10 * (avg_opp_xwoba - 0.310)
+        - 0.10 * (p["bb_rate"] - 0.08)
+        - 0.08 * (p["xwoba"] - 0.310)
     )
-    effective_k_rate = clamp(effective_k_rate, 0.12, 0.42)
+    effective_k_rate = clamp(effective_k_rate, 0.14, 0.38)
 
     lineup_size = len(opp_batters)
     batters_faced = (
-        24.2
-        + 6.5 * (p["k_rate"] - 0.22)
-        - 4.0 * (p["bb_rate"] - 0.08)
-        - 2.0 * (avg_opp_xwoba - 0.310)
+        24.0
+        + 5.2 * (p["k_rate"] - 0.22)
+        - 3.0 * (p["bb_rate"] - 0.08)
+        - 1.6 * (avg_opp_xwoba - 0.310)
     )
     if lineup_size >= 9:
-        batters_faced += 0.8
+        batters_faced += 0.7
     elif lineup_size <= 6:
-        batters_faced -= 1.2
-    batters_faced = clamp(batters_faced, 20.0, 29.0)
+        batters_faced -= 1.0
 
+    batters_faced = clamp(batters_faced, 20.5, 28.0)
     return effective_k_rate * batters_faced
 
 
 def prob_over_k_line(expected_ks, line):
-    std_dev = 1.75 + 0.06 * max(0.0, 6.0 - expected_ks)
+    std_dev = 1.7 + 0.05 * max(0.0, 6.0 - expected_ks)
     z = (expected_ks - line) / std_dev
     return 1 / (1 + math.exp(-1.7 * z))
 
@@ -834,7 +860,6 @@ for _, row in matchups.iterrows():
             "HR Park": round(calc["hr_factor"], 2),
             "Hit Park": round(calc["hit_factor"], 2),
             "Model Score": round(calc["weighted_score"], 1),
-            "Best Grade": grade_from_score(calc["weighted_score"]),
         }
     )
 
@@ -845,6 +870,8 @@ if batters_df.empty:
     if skipped:
         st.write(skipped)
     st.stop()
+
+batters_df = apply_relative_grades(batters_df, "Model Score", "Best Grade")
 
 # =========================================================
 # BEST PICKS BOARD
@@ -907,11 +934,13 @@ for pitcher_name, grp in batters_df.groupby("Pitcher"):
             "Over 5.5 Fair": prob_to_fair_american(prob_55),
             "Over 6.5 %": round(prob_65 * 100, 1),
             "Over 6.5 Fair": prob_to_fair_american(prob_65),
+            "K Score": round((prob_45 * 0.30 + prob_55 * 0.45 + prob_65 * 0.25) * 100, 1),
         }
     )
 
 pitchers_df = pd.DataFrame(pitcher_board)
 if not pitchers_df.empty:
+    pitchers_df = apply_relative_grades(pitchers_df, "K Score", "Grade")
     pitchers_df = pitchers_df.sort_values("Proj Ks", ascending=False).reset_index(drop=True)
 
 # =========================================================
