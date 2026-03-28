@@ -1,5 +1,6 @@
 import math
 from datetime import datetime
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 import requests
@@ -8,7 +9,7 @@ import streamlit as st
 st.set_page_config(page_title="CJ Daily MLB AI Board", layout="wide")
 
 st.title("🔥 CJNeverStops Daily MLB AI Board")
-st.caption("Auto teams + auto lineups + probable pitchers + daily ranked picks")
+st.caption("Daily MLB projections for hitters and pitchers with fair odds and edge checkers")
 
 with st.expander("How to Read the Model", expanded=True):
     st.markdown(
@@ -32,7 +33,7 @@ with st.expander("How to Read the Model", expanded=True):
 - **RBI %** = 20%
 - **HR %** = 10%
 
-Think of it as a matchup strength score, not a guaranteed winner.
+Use it as an overall matchup-strength score, then compare your model price to the book.
 """
     )
 
@@ -42,48 +43,48 @@ PARKS_FILE = "parks.csv"
 
 
 @st.cache_data(ttl=3600)
-def try_load_csv(path: str):
+def try_load_csv(path: str) -> Tuple[pd.DataFrame, Optional[str]]:
     try:
         return pd.read_csv(path), None
     except Exception as e:
         return pd.DataFrame(), str(e)
 
 
-def norm_text(s) -> str:
-    return " ".join(str(s).strip().lower().replace(",", "").split())
+def norm_text(value) -> str:
+    return " ".join(str(value).strip().lower().replace(",", "").split())
 
 
-def first_last_name(s) -> str:
-    s = str(s).strip()
-    if "," in s:
-        parts = [p.strip() for p in s.split(",", 1)]
+def first_last_name(value) -> str:
+    text = str(value).strip()
+    if "," in text:
+        parts = [p.strip() for p in text.split(",", 1)]
         if len(parts) == 2:
             return f"{parts[1]} {parts[0]}".strip()
-    return s
+    return text
 
 
-def make_name_keys(s):
-    raw = str(s).strip()
+def make_name_keys(value) -> Set[str]:
+    raw = str(value).strip()
     return {
         norm_text(raw),
         norm_text(first_last_name(raw)),
     }
 
 
-def safe_float(v, default=0.0):
+def safe_float(value, default: float = 0.0) -> float:
     try:
-        if pd.isna(v):
+        if pd.isna(value):
             return default
-        return float(v)
+        return float(value)
     except Exception:
         return default
 
 
-def pct_to_decimal(v, default=None):
+def pct_to_decimal(value, default: Optional[float] = None) -> Optional[float]:
     try:
-        if pd.isna(v):
+        if pd.isna(value):
             return default
-        v = float(v)
+        v = float(value)
         return v / 100.0 if v > 1 else v
     except Exception:
         return default
@@ -93,21 +94,21 @@ def logistic(x: float) -> float:
     return 1 / (1 + math.exp(-x))
 
 
-def find_col(df: pd.DataFrame, candidates):
+def find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     lower_map = {str(c).strip().lower(): c for c in df.columns}
     for cand in candidates:
-        cand_l = str(cand).strip().lower()
-        if cand_l in lower_map:
-            return lower_map[cand_l]
+        key = str(cand).strip().lower()
+        if key in lower_map:
+            return lower_map[key]
     for cand in candidates:
-        cand_l = str(cand).strip().lower()
+        key = str(cand).strip().lower()
         for col in df.columns:
-            if cand_l in str(col).strip().lower():
+            if key in str(col).strip().lower():
                 return col
     return None
 
 
-def require_col(df: pd.DataFrame, candidates, label: str):
+def require_col(df: pd.DataFrame, candidates: List[str], label: str) -> str:
     col = find_col(df, candidates)
     if col is None:
         st.error(f"Missing {label}. Found columns: {list(df.columns)}")
@@ -115,8 +116,8 @@ def require_col(df: pd.DataFrame, candidates, label: str):
     return col
 
 
-def scale_park_factor(v, default=1.0):
-    x = safe_float(v, default)
+def scale_park_factor(value, default: float = 1.0) -> float:
+    x = safe_float(value, default)
     return x / 100.0 if x > 3 else x
 
 
@@ -130,7 +131,7 @@ def grade_from_score(score: float) -> str:
     return "❌ PASS"
 
 
-def team_abbrev_map():
+def team_abbrev_map() -> Dict[str, str]:
     return {
         "arizona diamondbacks": "ARI",
         "atlanta braves": "ATL",
@@ -166,7 +167,7 @@ def team_abbrev_map():
     }
 
 
-def get_team_match_values(team_name: str):
+def get_team_match_values(team_name: str) -> Set[str]:
     vals = {norm_text(team_name)}
     abbr = team_abbrev_map().get(norm_text(team_name), "")
     if abbr:
@@ -186,9 +187,9 @@ def platoon_boost(batter_hand, pitcher_hand) -> float:
     return 1.00
 
 
-def lineup_boost(spot) -> float:
+def lineup_boost(lineup_spot) -> float:
     try:
-        s = int(float(spot))
+        s = int(float(lineup_spot))
     except Exception:
         return 1.00
     boosts = {
@@ -203,6 +204,44 @@ def lineup_boost(spot) -> float:
         9: 0.93,
     }
     return boosts.get(s, 1.00)
+
+
+def rbi_lineup_boost(lineup_spot) -> float:
+    try:
+        s = int(float(lineup_spot))
+    except Exception:
+        return 1.00
+    boost_map = {
+        1: 0.88,
+        2: 0.96,
+        3: 1.12,
+        4: 1.18,
+        5: 1.10,
+        6: 1.00,
+        7: 0.92,
+        8: 0.86,
+        9: 0.80,
+    }
+    return boost_map.get(s, 1.00)
+
+
+def estimate_plate_appearances(lineup_spot) -> float:
+    try:
+        s = int(float(lineup_spot))
+    except Exception:
+        return 4.2
+    pa_map = {
+        1: 4.9,
+        2: 4.8,
+        3: 4.7,
+        4: 4.6,
+        5: 4.5,
+        6: 4.3,
+        7: 4.2,
+        8: 4.0,
+        9: 3.8,
+    }
+    return pa_map.get(s, 4.2)
 
 
 def implied_prob_from_american(odds: int) -> float:
@@ -294,10 +333,7 @@ def get_game_lineups(game_pk):
                 )
         return players
 
-    return {
-        "away": extract_side("away"),
-        "home": extract_side("home"),
-    }
+    return {"away": extract_side("away"), "home": extract_side("home")}
 
 
 @st.cache_data(ttl=86400)
@@ -321,228 +357,13 @@ def get_mlb_roster_map():
 
         for p in roster:
             name = p["person"]["fullName"]
-            full_key = norm_text(name)
-            rev_key = norm_text(first_last_name(name))
-            player_team[full_key] = team_abbr
-            player_team[rev_key] = team_abbr
+            player_team[norm_text(name)] = team_abbr
+            player_team[norm_text(first_last_name(name))] = team_abbr
 
     return player_team
 
 
-# Load files
-batters, batters_err = try_load_csv(BATTERS_FILE)
-pitchers, pitchers_err = try_load_csv(PITCHERS_FILE)
-parks, parks_err = try_load_csv(PARKS_FILE)
-
-if batters.empty:
-    st.error(f"Could not load batters.csv: {batters_err}")
-    st.stop()
-
-if pitchers.empty:
-    st.error(f"Could not load pitchers.csv: {pitchers_err}")
-    st.stop()
-
-if parks.empty:
-    st.error(f"Could not load parks.csv: {parks_err}")
-    st.stop()
-
-# Map columns
-b_name = require_col(batters, ["player_name", "name", "player", "last_name, first_name"], "batter name column")
-b_xba = find_col(batters, ["xba", "est_ba", "estimated_ba", "est ba", "est_ba"])
-b_xslg = find_col(batters, ["xslg", "est_slg", "estimated_slg", "est slg", "est_slg"])
-b_xwoba = find_col(batters, ["xwoba", "est_woba", "estimated_woba_using_speedangle", "est woba", "est_woba"])
-b_barrel = find_col(batters, ["brl_percent", "barrel_batted_rate", "barrel_pct", "barrel"])
-b_hardhit = find_col(batters, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
-b_k = find_col(batters, ["k_percent", "strikeout_percent", "k%"])
-b_bb = find_col(batters, ["bb_percent", "walk_percent", "bb%"])
-
-p_name = require_col(pitchers, ["player_name", "name", "player", "last_name, first_name"], "pitcher name column")
-p_xba = find_col(pitchers, ["xba", "est_ba", "estimated_ba", "est ba", "est_ba"])
-p_xslg = find_col(pitchers, ["xslg", "est_slg", "estimated_slg", "est slg", "est_slg"])
-p_xwoba = find_col(pitchers, ["xwoba", "est_woba", "estimated_woba_using_speedangle", "est woba", "est_woba"])
-p_barrel = find_col(pitchers, ["brl_percent", "barrel_batted_rate", "barrel_pct", "barrel"])
-p_hardhit = find_col(pitchers, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
-p_k = find_col(pitchers, ["k_percent", "strikeout_percent", "k%"])
-p_bb = find_col(pitchers, ["bb_percent", "walk_percent", "bb%"])
-
-park_name_col = require_col(parks, ["park_name", "venue_name", "park", "venue"], "park name column")
-park_hr_col = find_col(parks, ["hr_factor", "hr", "home_run", "home_runs"])
-park_hit_col = find_col(parks, ["hit_factor", "hit", "hits", "1b"])
-
-# Clean data
-batters = batters.copy()
-pitchers = pitchers.copy()
-parks = parks.copy()
-
-batters["_keys"] = batters[b_name].astype(str).apply(make_name_keys)
-pitchers["_keys"] = pitchers[p_name].astype(str).apply(make_name_keys)
-parks["_park"] = parks[park_name_col].astype(str).str.strip().str.lower()
-
-roster_map = get_mlb_roster_map()
-
-def find_team(name):
-    raw = str(name).strip()
-    key1 = norm_text(raw)
-    key2 = norm_text(first_last_name(raw))
-    return roster_map.get(key1, roster_map.get(key2, ""))
-
-batters["_team_auto"] = batters[b_name].astype(str).apply(find_team)
-batters["_team_norm"] = batters["_team_auto"].map(norm_text)
-
-# Sidebar
-with st.sidebar:
-    st.header("Auto Slate")
-    weather_boost_default = st.slider("Default weather boost", 0.90, 1.15, 1.00, 0.01)
-    team_total_default = st.slider("Default team total", 3.0, 6.5, 4.2, 0.1)
-    show_unconfirmed = st.toggle("Show fallback team hitters when lineups aren't posted", value=True)
-    team_col_pick = st.selectbox(
-        "Batter team column",
-        options=["_team_auto"] + [c for c in batters.columns if c != "_team_auto"],
-        index=0,
-    )
-
-if team_col_pick == "_team_auto":
-    batters["_team_norm"] = batters["_team_auto"].map(norm_text)
-else:
-    batters["_team_norm"] = batters[team_col_pick].astype(str).map(norm_text)
-
-# Schedule
-games, games_err = get_today_schedule()
-
-st.subheader("📅 Today's MLB Games")
-if not games:
-    st.warning(f"Could not load today's schedule. {games_err if games_err else ''}")
-    st.stop()
-
-schedule_df = pd.DataFrame(games)
-st.dataframe(schedule_df, use_container_width=True)
-
-# Build slate
-auto_rows = []
-skipped = []
-lineup_status_rows = []
-
-for game in games:
-    away_team = game["away_team"]
-    home_team = game["home_team"]
-    away_pitcher = game["away_pitcher"]
-    home_pitcher = game["home_pitcher"]
-    park = game["park"]
-    game_pk = game["gamePk"]
-
-    lineups = get_game_lineups(game_pk)
-    away_lineup = lineups.get("away", [])
-    home_lineup = lineups.get("home", [])
-
-    lineup_status_rows.append(
-        {
-            "Game": f"{away_team} @ {home_team}",
-            "Away Lineup Posted": len(away_lineup) > 0,
-            "Home Lineup Posted": len(home_lineup) > 0,
-            "Away Pitcher": away_pitcher,
-            "Home Pitcher": home_pitcher,
-            "Park": park,
-        }
-    )
-
-    if home_pitcher:
-        if away_lineup:
-            for hitter in away_lineup:
-                auto_rows.append(
-                    {
-                        "batter": hitter["name"],
-                        "pitcher": home_pitcher,
-                        "park": park,
-                        "batter_hand": hitter.get("batter_hand", ""),
-                        "pitcher_hand": "",
-                        "lineup_spot": hitter.get("lineup_spot", 5),
-                        "team": away_team,
-                        "opp_team": home_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
-                    }
-                )
-        elif show_unconfirmed:
-            away_vals = get_team_match_values(away_team)
-            away_hitters = batters[batters["_team_norm"].isin(away_vals)]
-            for _, batter_row in away_hitters.iterrows():
-                auto_rows.append(
-                    {
-                        "batter": batter_row[b_name],
-                        "pitcher": home_pitcher,
-                        "park": park,
-                        "batter_hand": "",
-                        "pitcher_hand": "",
-                        "lineup_spot": 5,
-                        "team": away_team,
-                        "opp_team": home_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
-                    }
-                )
-
-    if away_pitcher:
-        if home_lineup:
-            for hitter in home_lineup:
-                auto_rows.append(
-                    {
-                        "batter": hitter["name"],
-                        "pitcher": away_pitcher,
-                        "park": park,
-                        "batter_hand": hitter.get("batter_hand", ""),
-                        "pitcher_hand": "",
-                        "lineup_spot": hitter.get("lineup_spot", 5),
-                        "team": home_team,
-                        "opp_team": away_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
-                    }
-                )
-        elif show_unconfirmed:
-            home_vals = get_team_match_values(home_team)
-            home_hitters = batters[batters["_team_norm"].isin(home_vals)]
-            for _, batter_row in home_hitters.iterrows():
-                auto_rows.append(
-                    {
-                        "batter": batter_row[b_name],
-                        "pitcher": away_pitcher,
-                        "park": park,
-                        "batter_hand": "",
-                        "pitcher_hand": "",
-                        "lineup_spot": 5,
-                        "team": home_team,
-                        "opp_team": away_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
-                    }
-                )
-
-matchups = pd.DataFrame(auto_rows)
-
-if matchups.empty:
-    st.error("Auto slate built zero rows. Wait for lineups to post, or let the MLB roster auto team matching catch your hitters.")
-    st.stop()
-
-matchups["_batter"] = matchups["batter"].astype(str).map(norm_text)
-matchups["_pitcher"] = matchups["pitcher"].astype(str).map(norm_text)
-matchups["_park"] = matchups["park"].astype(str).str.strip().str.lower()
-
-with st.expander("Lineup Status"):
-    st.dataframe(pd.DataFrame(lineup_status_rows), use_container_width=True)
-
-with st.expander("Debug Info"):
-    st.write("Batters columns:", list(batters.columns))
-    st.write("Pitchers columns:", list(pitchers.columns))
-    st.write("Parks columns:", list(parks.columns))
-    st.write("Chosen team column:", team_col_pick)
-    st.write("Auto team matches:", int((batters["_team_auto"] != "").sum()))
-    st.write("Batters rows:", len(batters))
-    st.write("Pitchers rows:", len(pitchers))
-    st.write("Parks rows:", len(parks))
-    st.write("Auto matchup rows:", len(matchups))
-
-# Model helpers
-def get_batter_metrics(row):
+def get_batter_metrics(row, b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb):
     return {
         "xba": safe_float(row[b_xba], 0.240) if b_xba else 0.240,
         "xslg": safe_float(row[b_xslg], 0.390) if b_xslg else 0.390,
@@ -554,7 +375,7 @@ def get_batter_metrics(row):
     }
 
 
-def get_pitcher_metrics(row):
+def get_pitcher_metrics(row, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb):
     return {
         "xba": safe_float(row[p_xba], 0.240) if p_xba else 0.240,
         "xslg": safe_float(row[p_xslg], 0.390) if p_xslg else 0.390,
@@ -566,8 +387,8 @@ def get_pitcher_metrics(row):
     }
 
 
-def get_park_factors(park_key):
-    row = parks.loc[parks["_park"] == park_key]
+def get_park_factors(parks_df, park_key, park_hr_col, park_hit_col):
+    row = parks_df.loc[parks_df["_park"] == park_key]
     if row.empty:
         return {"hr_factor": 1.00, "hit_factor": 1.00}
     row = row.iloc[0]
@@ -577,18 +398,25 @@ def get_park_factors(park_key):
     }
 
 
-def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_hand, lineup_spot, weather_boost, team_total):
-    b = get_batter_metrics(batter_row)
-    p = get_pitcher_metrics(pitcher_row)
-    park = get_park_factors(park_key)
+def pitcher_hr_tendency(p):
+    return ((p["xslg"] - 0.390) * 2.2) + ((p["barrel"] - 0.08) * 3.5)
+
+
+def calc_batter_board(batter_row, pitcher_row, parks_df, park_key, batter_hand, pitcher_hand, lineup_spot, weather_boost, team_total,
+                      b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb,
+                      p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb,
+                      park_hr_col, park_hit_col):
+    b = get_batter_metrics(batter_row, b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb)
+    p = get_pitcher_metrics(pitcher_row, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb)
+    park = get_park_factors(parks_df, park_key, park_hr_col, park_hit_col)
 
     platoon = platoon_boost(batter_hand, pitcher_hand)
     lineup_mult = lineup_boost(lineup_spot)
     weather_mult = safe_float(weather_boost, 1.00)
     team_total_v = safe_float(team_total, 4.2)
-    team_total_mult = min(max(team_total_v / 4.2, 0.85), 1.20)
+    team_total_mult = max(0.85, min(1.20, team_total_v / 4.2))
+    plate_appearances = estimate_plate_appearances(lineup_spot)
 
-    # Per-PA hit signal
     hit_score_raw = (
         2.2 * (b["xba"] - 0.240)
         + 1.1 * (b["xwoba"] - 0.310)
@@ -598,49 +426,57 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         - 1.3 * (p["xba"] - 0.240)
     )
     hit_prob_pa = logistic(-1.20 + hit_score_raw) * park["hit_factor"] * platoon
-    hit_prob_pa = min(max(hit_prob_pa, 0.03), 0.75)
-
-    # Convert to game-level probability for 1+ hit
-    estimated_pa = min(max(3.4 * lineup_mult, 3.2), 5.0)
-    hit_prob = 1 - (1 - hit_prob_pa) ** estimated_pa
-    hit_prob = min(max(hit_prob, 0.10), 0.95)
+    hit_prob_pa = max(0.03, min(0.75, hit_prob_pa))
+    hit_prob = 1 - (1 - hit_prob_pa) ** plate_appearances
+    hit_prob = max(0.10, min(0.95, hit_prob))
 
     hr_score_raw = (
-        4.5 * (b["xslg"] - 0.390)
-        + 2.4 * (b["barrel"] - 0.08)
-        + 1.4 * (b["hardhit"] - 0.38)
-        + 2.6 * (p["xslg"] - 0.390)
-        + 1.5 * (p["barrel"] - 0.08)
-        + 0.8 * (p["hardhit"] - 0.38)
+        5.2 * (b["xslg"] - 0.390)
+        + 3.0 * (b["barrel"] - 0.08)
+        + 1.6 * (b["hardhit"] - 0.38)
+        + 2.8 * (p["xslg"] - 0.390)
+        + 2.0 * (p["barrel"] - 0.08)
+        + pitcher_hr_tendency(p)
     )
-    hr_prob = logistic(-3.10 + hr_score_raw) * park["hr_factor"] * weather_mult * platoon * lineup_mult
-    hr_prob = min(max(hr_prob, 0.005), 0.55)
+    hr_prob_pa = logistic(-3.25 + hr_score_raw)
+    hr_prob = 1 - (1 - hr_prob_pa) ** plate_appearances
+    hr_prob *= park["hr_factor"]
+    hr_prob *= weather_mult
+    hr_prob *= platoon
+    hr_prob = max(0.01, min(0.60, hr_prob))
 
     tb_score_raw = (
-        3.0 * (b["xslg"] - 0.390)
-        + 1.4 * (b["xba"] - 0.240)
-        + 1.5 * (b["hardhit"] - 0.38)
-        + 1.2 * (b["barrel"] - 0.08)
-        + 1.5 * (p["xslg"] - 0.390)
+        3.4 * (b["xslg"] - 0.390)
+        + 1.8 * (b["xba"] - 0.240)
+        + 1.8 * (b["hardhit"] - 0.38)
+        + 1.5 * (b["barrel"] - 0.08)
+        + 1.9 * (p["xslg"] - 0.390)
+        + 0.8 * (p["xba"] - 0.240)
     )
-    tb_prob = logistic(-0.95 + tb_score_raw) * park["hit_factor"] * park["hr_factor"] * platoon * lineup_mult
-    tb_prob = min(max(tb_prob, 0.03), 0.90)
+    tb_prob_pa = logistic(-1.45 + tb_score_raw)
+    tb_prob_pa = max(0.03, min(0.65, tb_prob_pa))
+    tb_prob = 1 - (1 - tb_prob_pa) ** (plate_appearances * 0.92)
+    tb_prob *= park["hit_factor"]
+    tb_prob *= (park["hr_factor"] ** 0.35)
+    tb_prob *= platoon
+    tb_prob = max(0.05, min(0.92, tb_prob))
 
     rbi_score_raw = (
-        2.1 * (b["xwoba"] - 0.310)
-        + 2.0 * (b["xslg"] - 0.390)
-        + 1.2 * (b["hardhit"] - 0.38)
-        + 1.0 * (p["xwoba"] - 0.310)
+        2.3 * (b["xwoba"] - 0.310)
+        + 2.4 * (b["xslg"] - 0.390)
+        + 1.3 * (b["hardhit"] - 0.38)
+        + 1.1 * (p["xwoba"] - 0.310)
     )
-    rbi_prob = logistic(-1.55 + rbi_score_raw) * park["hit_factor"] * platoon * lineup_mult * team_total_mult
-    rbi_prob = min(max(rbi_prob, 0.02), 0.85)
+    rbi_prob_pa = logistic(-2.10 + rbi_score_raw)
+    rbi_prob_pa = max(0.02, min(0.45, rbi_prob_pa))
+    rbi_prob = 1 - (1 - rbi_prob_pa) ** (plate_appearances * 0.95)
+    rbi_prob *= park["hit_factor"]
+    rbi_prob *= team_total_mult
+    rbi_prob *= platoon
+    rbi_prob *= rbi_lineup_boost(lineup_spot)
+    rbi_prob = max(0.03, min(0.88, rbi_prob))
 
-    weighted_score = (
-        hit_prob * 0.40
-        + tb_prob * 0.30
-        + rbi_prob * 0.20
-        + hr_prob * 0.10
-    ) * 100
+    weighted_score = (hit_prob * 0.40 + tb_prob * 0.30 + rbi_prob * 0.20 + hr_prob * 0.10) * 100
 
     return {
         "hit_prob": hit_prob,
@@ -648,26 +484,29 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         "tb_prob": tb_prob,
         "rbi_prob": rbi_prob,
         "platoon": platoon,
-        "lineup_mult": lineup_mult,
         "hr_factor": park["hr_factor"],
         "hit_factor": park["hit_factor"],
         "weighted_score": weighted_score,
     }
 
 
-def project_pitcher_ks(pitcher_row, opp_batters):
-    p = get_pitcher_metrics(pitcher_row)
-
+def project_pitcher_ks(pitcher_row, opp_batters, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb):
+    p = get_pitcher_metrics(pitcher_row, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb)
     if opp_batters:
-        avg_b_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
+        avg_opp_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
     else:
-        avg_b_k = 0.22
+        avg_opp_k = 0.22
 
-    base_k_rate = (p["k_rate"] + avg_b_k) / 2
-    batters_faced = 24
-    expected_ks = base_k_rate * batters_faced
+    base_k_rate = (p["k_rate"] + avg_opp_k) / 2
 
-    return expected_ks
+    lineup_size = len(opp_batters)
+    batters_faced = 24.0
+    if lineup_size >= 9:
+        batters_faced = 25.0
+    elif lineup_size <= 6:
+        batters_faced = 22.5
+
+    return base_k_rate * batters_faced
 
 
 def prob_over_k_line(expected_ks, line):
@@ -678,7 +517,6 @@ def prob_over_k_line(expected_ks, line):
 
 # Build batter board
 rows = []
-
 for _, row in matchups.iterrows():
     batter_match = find_name_match(batters, row["_batter"])
     pitcher_match = find_name_match(pitchers, row["_pitcher"])
@@ -694,54 +532,43 @@ for _, row in matchups.iterrows():
     pitcher_row = pitcher_match.iloc[0]
 
     calc = calc_batter_board(
-        batter_row=batter_row,
-        pitcher_row=pitcher_row,
-        park_key=row["_park"],
-        batter_hand=row.get("batter_hand", ""),
-        pitcher_hand=row.get("pitcher_hand", ""),
-        lineup_spot=row.get("lineup_spot", 5),
-        weather_boost=row.get("weather_boost", weather_boost_default),
-        team_total=row.get("team_total", team_total_default),
+        batter_row, pitcher_row, parks, row["_park"], row.get("batter_hand", ""), row.get("pitcher_hand", ""),
+        row.get("lineup_spot", 5), row.get("weather_boost", weather_boost_default), row.get("team_total", team_total_default),
+        b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb,
+        p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb,
+        park_hr_col, park_hit_col
     )
 
-    hit_fair = prob_to_fair_american(calc["hit_prob"])
-    hr_fair = prob_to_fair_american(calc["hr_prob"])
-    tb_fair = prob_to_fair_american(calc["tb_prob"])
-    rbi_fair = prob_to_fair_american(calc["rbi_prob"])
-
-    rows.append(
-        {
-            "Batter": row["batter"],
-            "Pitcher": row["pitcher"],
-            "Team": row.get("team", ""),
-            "Opp": row.get("opp_team", ""),
-            "Park": row["park"],
-            "Lineup": int(float(row.get("lineup_spot", 5))),
-            "Hit %": round(calc["hit_prob"] * 100, 1),
-            "HR %": round(calc["hr_prob"] * 100, 1),
-            "TB %": round(calc["tb_prob"] * 100, 1),
-            "RBI %": round(calc["rbi_prob"] * 100, 1),
-            "Hit Fair Odds": hit_fair,
-            "HR Fair Odds": hr_fair,
-            "TB Fair Odds": tb_fair,
-            "RBI Fair Odds": rbi_fair,
-            "Platoon": round(calc["platoon"], 2),
-            "HR Park": round(calc["hr_factor"], 2),
-            "Hit Park": round(calc["hit_factor"], 2),
-            "Model Score": round(calc["weighted_score"], 1),
-            "Best Grade": grade_from_score(calc["weighted_score"]),
-        }
-    )
+    rows.append({
+        "Batter": row["batter"],
+        "Pitcher": row["pitcher"],
+        "Team": row.get("team", ""),
+        "Opp": row.get("opp_team", ""),
+        "Park": row["park"],
+        "Lineup": int(float(row.get("lineup_spot", 5))),
+        "Hit %": round(calc["hit_prob"] * 100, 1),
+        "HR %": round(calc["hr_prob"] * 100, 1),
+        "TB %": round(calc["tb_prob"] * 100, 1),
+        "RBI %": round(calc["rbi_prob"] * 100, 1),
+        "Hit Fair Odds": prob_to_fair_american(calc["hit_prob"]),
+        "HR Fair Odds": prob_to_fair_american(calc["hr_prob"]),
+        "TB Fair Odds": prob_to_fair_american(calc["tb_prob"]),
+        "RBI Fair Odds": prob_to_fair_american(calc["rbi_prob"]),
+        "Platoon": round(calc["platoon"], 2),
+        "HR Park": round(calc["hr_factor"], 2),
+        "Hit Park": round(calc["hit_factor"], 2),
+        "Model Score": round(calc["weighted_score"], 1),
+        "Best Grade": grade_from_score(calc["weighted_score"]),
+    })
 
 batters_df = pd.DataFrame(rows)
-
 if batters_df.empty:
     st.error("No valid matchup rows were processed.")
     if skipped:
         st.write(skipped)
     st.stop()
 
-# Best picks
+# Best picks board
 best_pick_rows = []
 for _, r in batters_df.iterrows():
     prop_options = [
@@ -751,23 +578,20 @@ for _, r in batters_df.iterrows():
         ("RBI", r["RBI %"], r["RBI Fair Odds"]),
     ]
     best_prop, best_prob, best_fair = sorted(prop_options, key=lambda x: x[1], reverse=True)[0]
-
-    best_pick_rows.append(
-        {
-            "Player": r["Batter"],
-            "Pitcher": r["Pitcher"],
-            "Park": r["Park"],
-            "Best Prop": best_prop,
-            "Best Prop %": best_prob,
-            "Fair Odds": best_fair,
-            "Model Score": r["Model Score"],
-            "Grade": r["Best Grade"],
-        }
-    )
+    best_pick_rows.append({
+        "Player": r["Batter"],
+        "Pitcher": r["Pitcher"],
+        "Park": r["Park"],
+        "Best Prop": best_prop,
+        "Best Prop %": best_prob,
+        "Fair Odds": best_fair,
+        "Model Score": r["Model Score"],
+        "Grade": r["Best Grade"],
+    })
 
 best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Model Score", ascending=False).reset_index(drop=True)
 
-# Pitcher K board with multiple lines
+# Pitcher K board
 pitcher_board = []
 for pitcher_name, grp in batters_df.groupby("Pitcher"):
     p_match = find_name_match(pitchers, norm_text(pitcher_name))
@@ -775,32 +599,28 @@ for pitcher_name, grp in batters_df.groupby("Pitcher"):
         continue
 
     p_row = p_match.iloc[0]
-
     opp_batters = []
-    for _, r in grp.iterrows():
-        bm = find_name_match(batters, norm_text(r["Batter"]))
-        if not bm.empty:
-            opp_batters.append(get_batter_metrics(bm.iloc[0]))
+    for _, batter_rec in grp.iterrows():
+        b_match = find_name_match(batters, norm_text(batter_rec["Batter"]))
+        if not b_match.empty:
+            opp_batters.append(get_batter_metrics(b_match.iloc[0], b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb))
 
-    expected_ks = project_pitcher_ks(p_row, opp_batters)
-
+    expected_ks = project_pitcher_ks(p_row, opp_batters, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb)
     prob_45 = prob_over_k_line(expected_ks, 4.5)
     prob_55 = prob_over_k_line(expected_ks, 5.5)
     prob_65 = prob_over_k_line(expected_ks, 6.5)
 
-    pitcher_board.append(
-        {
-            "Pitcher": pitcher_name,
-            "Opponent": grp["Team"].iloc[0] if "Team" in grp.columns else "",
-            "Proj Ks": round(expected_ks, 2),
-            "Over 4.5 %": round(prob_45 * 100, 1),
-            "Over 4.5 Fair": prob_to_fair_american(prob_45),
-            "Over 5.5 %": round(prob_55 * 100, 1),
-            "Over 5.5 Fair": prob_to_fair_american(prob_55),
-            "Over 6.5 %": round(prob_65 * 100, 1),
-            "Over 6.5 Fair": prob_to_fair_american(prob_65),
-        }
-    )
+    pitcher_board.append({
+        "Pitcher": pitcher_name,
+        "Opponent": grp["Team"].iloc[0] if "Team" in grp.columns else "",
+        "Proj Ks": round(expected_ks, 2),
+        "Over 4.5 %": round(prob_45 * 100, 1),
+        "Over 4.5 Fair": prob_to_fair_american(prob_45),
+        "Over 5.5 %": round(prob_55 * 100, 1),
+        "Over 5.5 Fair": prob_to_fair_american(prob_55),
+        "Over 6.5 %": round(prob_65 * 100, 1),
+        "Over 6.5 Fair": prob_to_fair_american(prob_65),
+    })
 
 pitchers_df = pd.DataFrame(pitcher_board)
 if not pitchers_df.empty:
@@ -815,9 +635,7 @@ c2.metric("Best Prop", top_pick["Best Prop"])
 c3.metric("Top Score", f"{top_pick['Model Score']}")
 c4.metric("Top Pitcher K Spot", top_k["Pitcher"] if top_k is not None else "—")
 
-# Hitter odds checker
 st.subheader("💰 Hitter Quick Odds Checker")
-
 checker_cols = st.columns(4)
 checker_player = checker_cols[0].selectbox("Player", best_picks_df["Player"].tolist())
 checker_prop = checker_cols[1].selectbox("Prop", ["Hit", "Home Run", "Total Bases", "RBI"])
@@ -825,7 +643,6 @@ checker_odds_text = checker_cols[2].text_input("Book Odds", value="+150")
 run_check = checker_cols[3].button("Check Hitter Edge")
 
 player_row = batters_df[batters_df["Batter"] == checker_player].iloc[0]
-
 prop_to_prob = {
     "Hit": player_row["Hit %"] / 100,
     "Home Run": player_row["HR %"] / 100,
@@ -846,19 +663,16 @@ if run_check:
         model_pct = prop_to_prob[checker_prop] * 100
         edge_pct = model_pct - implied
 
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        cc1.metric("Model %", f"{model_pct:.1f}%")
-        cc2.metric("Book Implied %", f"{implied:.1f}%")
-        cc3.metric("Edge %", f"{edge_pct:.1f}%")
-        cc4.metric("Fair Odds", str(prop_to_fair[checker_prop]))
-
+        hc1, hc2, hc3, hc4 = st.columns(4)
+        hc1.metric("Model %", f"{model_pct:.1f}%")
+        hc2.metric("Book Implied %", f"{implied:.1f}%")
+        hc3.metric("Edge %", f"{edge_pct:.1f}%")
+        hc4.metric("Fair Odds", str(prop_to_fair[checker_prop]))
         st.write(f"**Verdict:** {edge_grade(edge_pct)}")
     except Exception:
         st.warning("Enter odds like +150 or -120")
 
-# Pitcher odds checker
 st.subheader("🎯 Pitcher K Odds Checker")
-
 if not pitchers_df.empty:
     p_cols = st.columns(4)
     pitcher_name_check = p_cols[0].selectbox("Pitcher", pitchers_df["Pitcher"].tolist())
@@ -867,7 +681,6 @@ if not pitchers_df.empty:
     run_pitcher_check = p_cols[3].button("Check Pitcher Edge")
 
     p_row = pitchers_df[pitchers_df["Pitcher"] == pitcher_name_check].iloc[0]
-
     line_to_prob = {
         "Over 4.5": p_row["Over 4.5 %"],
         "Over 5.5": p_row["Over 5.5 %"],
@@ -891,12 +704,10 @@ if not pitchers_df.empty:
             pc2.metric("Book Implied %", f"{implied:.1f}%")
             pc3.metric("Edge %", f"{edge_pct:.1f}%")
             pc4.metric("Fair Odds", str(line_to_fair[k_line_check]))
-
             st.write(f"**Verdict:** {edge_grade(edge_pct)}")
         except Exception:
             st.warning("Enter odds like +150 or -120")
 
-# Main boards
 st.subheader("🔥 Best Rated Picks For The Day")
 top_display = best_picks_df.head(15).copy()
 
@@ -919,43 +730,31 @@ else:
     st.dataframe(pitchers_df.head(15), use_container_width=True)
 
 st.subheader("⚾ Best Batter Hit Chances")
-st.dataframe(
-    batters_df.sort_values("Hit %", ascending=False).head(15),
-    use_container_width=True,
-)
+st.dataframe(batters_df.sort_values("Hit %", ascending=False).head(15), use_container_width=True)
 
 st.subheader("💣 Best Home Run Chances")
-st.dataframe(
-    batters_df.sort_values("HR %", ascending=False).head(15),
-    use_container_width=True,
-)
+st.dataframe(batters_df.sort_values("HR %", ascending=False).head(15), use_container_width=True)
 
 st.subheader("🏃 Best Total Bases Chances")
-st.dataframe(
-    batters_df.sort_values("TB %", ascending=False).head(15),
-    use_container_width=True,
-)
+st.dataframe(batters_df.sort_values("TB %", ascending=False).head(15), use_container_width=True)
 
 st.subheader("💰 Best RBI Chances")
-st.dataframe(
-    batters_df.sort_values("RBI %", ascending=False).head(15),
-    use_container_width=True,
-)
+st.dataframe(batters_df.sort_values("RBI %", ascending=False).head(15), use_container_width=True)
 
 st.subheader("🧠 Why These Picks (Top 5 Breakdown)")
 top5 = best_picks_df.head(5)
 
-for _, r in top5.iterrows():
-    batter_row = batters[batters["_keys"].apply(lambda s: norm_text(r["Player"]) in s)].iloc[0]
-    pitcher_row = pitchers[pitchers["_keys"].apply(lambda s: norm_text(r["Pitcher"]) in s)].iloc[0]
+for _, rec in top5.iterrows():
+    batter_row = batters[batters["_keys"].apply(lambda s: norm_text(rec["Player"]) in s)].iloc[0]
+    pitcher_row = pitchers[pitchers["_keys"].apply(lambda s: norm_text(rec["Pitcher"]) in s)].iloc[0]
 
-    b = get_batter_metrics(batter_row)
-    p = get_pitcher_metrics(pitcher_row)
+    b = get_batter_metrics(batter_row, b_xba, b_xslg, b_xwoba, b_barrel, b_hardhit, b_k, b_bb)
+    p = get_pitcher_metrics(pitcher_row, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb)
 
-    st.markdown(f"### 🔥 {r['Player']} ({r['Best Prop']})")
+    st.markdown(f"### 🔥 {rec['Player']} ({rec['Best Prop']})")
     st.write(f"""
-**Matchup:** vs {r['Pitcher']}  
-**Park:** {r['Park']}
+**Matchup:** vs {rec['Pitcher']}  
+**Park:** {rec['Park']}
 
 **Why the model likes this:**
 - Batter xBA: {round(b['xba'], 3)}
@@ -967,10 +766,10 @@ for _, r in top5.iterrows():
 - Pitcher xSLG allowed: {round(p['xslg'], 3)}
 - Pitcher K%: {round(p['k_rate'] * 100, 1)}%
 
-**Best Prop %:** {r['Best Prop %']}  
-**Fair Odds:** {r['Fair Odds']}  
-**Model Score:** {r['Model Score']}  
-**Grade:** {r['Grade']}
+**Best Prop %:** {rec['Best Prop %']}  
+**Fair Odds:** {rec['Fair Odds']}  
+**Model Score:** {rec['Model Score']}  
+**Grade:** {rec['Grade']}
 """)
     st.divider()
 
