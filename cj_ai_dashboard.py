@@ -492,25 +492,45 @@ def calc_batter_board(batter_row, pitcher_row, parks_df, park_key, batter_hand, 
 
 def project_pitcher_ks(pitcher_row, opp_batters, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb):
     p = get_pitcher_metrics(pitcher_row, p_xba, p_xslg, p_xwoba, p_barrel, p_hardhit, p_k, p_bb)
+
     if opp_batters:
         avg_opp_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
+        avg_opp_bb = sum(x["bb_rate"] for x in opp_batters) / len(opp_batters)
+        avg_opp_xwoba = sum(x["xwoba"] for x in opp_batters) / len(opp_batters)
     else:
         avg_opp_k = 0.22
+        avg_opp_bb = 0.08
+        avg_opp_xwoba = 0.310
 
-    base_k_rate = (p["k_rate"] + avg_opp_k) / 2
+    # More pitcher-driven strikeout rate, with opponent swing-and-miss blended in.
+    adj_k_rate = (
+        0.65 * p["k_rate"]
+        + 0.35 * avg_opp_k
+        - 0.10 * (p["bb_rate"] - 0.08)
+        - 0.06 * (avg_opp_bb - 0.08)
+    )
+    adj_k_rate = max(0.14, min(0.42, adj_k_rate))
 
-    lineup_size = len(opp_batters)
-    batters_faced = 24.0
-    if lineup_size >= 9:
-        batters_faced = 25.0
-    elif lineup_size <= 6:
-        batters_faced = 22.5
+    # Estimate innings / batters faced from pitcher skill and opponent quality.
+    expected_ip = (
+        5.4
+        + 5.0 * (p["k_rate"] - 0.22)
+        - 4.0 * (p["bb_rate"] - 0.08)
+        - 5.0 * (p["xwoba"] - 0.310)
+        - 2.5 * (avg_opp_xwoba - 0.310)
+        - 1.5 * (avg_opp_bb - 0.08)
+    )
+    expected_ip = max(4.2, min(7.4, expected_ip))
 
-    return base_k_rate * batters_faced
+    batters_faced = expected_ip * 4.25
+    batters_faced = max(18.5, min(31.0, batters_faced))
+
+    expected_ks = adj_k_rate * batters_faced
+    return expected_ks
 
 
 def prob_over_k_line(expected_ks, line):
-    std_dev = 1.8
+    std_dev = 1.55 + 0.08 * max(expected_ks, 1.0)
     z = (expected_ks - line) / std_dev
     return 1 / (1 + math.exp(-1.7 * z))
 
