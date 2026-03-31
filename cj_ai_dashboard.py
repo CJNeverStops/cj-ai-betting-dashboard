@@ -52,7 +52,7 @@ PITCHERS_FILE = "pitchers.csv"
 PARKS_FILE = "parks.csv"
 
 # Paste your The Odds API key here
-ODDS_API_KEY = "a0fb1acf6e6147cf99f2dd2b20c1e265"
+ODDS_API_KEY = "PASTE_YOUR_KEY_HERE"
 ODDS_REGIONS = "us"
 PLAYER_PROP_MARKETS = [
     "batter_hits",
@@ -209,25 +209,6 @@ def estimate_plate_appearances(lineup_spot) -> float:
     return pa_map.get(s, 4.2)
 
 
-def lineup_boost(lineup_spot) -> float:
-    try:
-        s = int(float(lineup_spot))
-    except Exception:
-        return 1.00
-    boosts = {
-        1: 1.04,
-        2: 1.05,
-        3: 1.07,
-        4: 1.09,
-        5: 1.05,
-        6: 1.01,
-        7: 0.98,
-        8: 0.95,
-        9: 0.93,
-    }
-    return boosts.get(s, 1.00)
-
-
 def rbi_lineup_boost(lineup_spot) -> float:
     try:
         s = int(float(lineup_spot))
@@ -353,13 +334,14 @@ def get_today_schedule():
         return [], str(e)
 
     games = []
+    valid_teams = team_abbrev_map()
     for d in data.get("dates", []):
         for g in d.get("games", []):
             try:
                 away_team = g["teams"]["away"]["team"]["name"]
                 home_team = g["teams"]["home"]["team"]["name"]
 
-                if norm_text(away_team) not in team_abbrev_map() or norm_text(home_team) not in team_abbrev_map():
+                if norm_text(away_team) not in valid_teams or norm_text(home_team) not in valid_teams:
                     continue
 
                 games.append(
@@ -449,7 +431,7 @@ def get_mlb_roster_map():
 # =========================================================
 @st.cache_data(ttl=300)
 def get_odds_api_events():
-    if not ODDS_API_KEY or ODDS_API_KEY == "PASTE_YOUR_KEY_HERE":
+    if not ODDS_API_KEY or ODDS_API_KEY == "a0fb1acf6e6147cf99f2dd2b20c1e265":
         return []
 
     url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/events"
@@ -525,14 +507,26 @@ def build_odds_lookup():
                         }
                     )
 
+    empty_cols = [
+        "player_key",
+        "player_name",
+        "market",
+        "side",
+        "line",
+        "price",
+        "bookmaker",
+        "home_team",
+        "away_team",
+    ]
+
     if not odds_rows:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=empty_cols)
 
     odds_df = pd.DataFrame(odds_rows)
     over_df = odds_df[odds_df["side"].astype(str).str.lower() == "over"].copy()
 
     if over_df.empty:
-        return over_df
+        return pd.DataFrame(columns=empty_cols)
 
     over_df["sort_price"] = over_df["price"].astype(float)
     over_df = over_df.sort_values("sort_price", ascending=False)
@@ -773,6 +767,8 @@ odds_df = build_odds_lookup()
 
 if ODDS_API_KEY == "PASTE_YOUR_KEY_HERE":
     st.info("Add your The Odds API key at the top of the file to enable sportsbook prop matching.")
+elif odds_df.empty:
+    st.warning("No sportsbook props loaded yet. Check your Odds API key, request limits, or whether MLB player props are available right now.")
 
 # =========================================================
 # METRIC EXTRACTORS
@@ -830,7 +826,6 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     team_total_mult = clamp(team_total_v / 4.2, 0.88, 1.15)
     plate_appearances = estimate_plate_appearances(lineup_spot)
 
-    # Hit model
     hit_score_raw = (
         1.9 * (b["xba"] - 0.240)
         + 0.9 * (b["xwoba"] - 0.310)
@@ -844,7 +839,6 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     hit_prob = 1 - (1 - hit_prob_pa) ** plate_appearances
     hit_prob = clamp(hit_prob, 0.18, 0.88)
 
-    # HR model
     hr_score_raw = (
         4.2 * (b["xslg"] - 0.390)
         + 2.6 * (b["barrel"] - 0.08)
@@ -860,7 +854,6 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     hr_prob *= platoon
     hr_prob = clamp(hr_prob, 0.01, 0.28)
 
-    # TB model
     tb_score_raw = (
         2.6 * (b["xslg"] - 0.390)
         + 1.2 * (b["xba"] - 0.240)
@@ -877,7 +870,6 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     tb_prob *= platoon
     tb_prob = clamp(tb_prob, 0.10, 0.72)
 
-    # RBI model
     rbi_score_raw = (
         1.9 * (b["xwoba"] - 0.310)
         + 1.8 * (b["xslg"] - 0.390)
@@ -1199,8 +1191,7 @@ st.subheader("🔗 Auto-Matched Sportsbook Edges")
 
 auto_edge_rows = []
 
-if not odds_df.empty:
-    # hitter props
+if not odds_df.empty and "player_key" in odds_df.columns:
     for _, r in batters_df.iterrows():
         player_key = normalize_prop_player_name(r["Batter"])
 
@@ -1258,7 +1249,6 @@ if not odds_df.empty:
                 }
             )
 
-    # pitcher props
     if not pitchers_df.empty:
         for _, p in pitchers_df.iterrows():
             player_key = normalize_prop_player_name(p["Pitcher"])
@@ -1313,7 +1303,7 @@ if auto_edge_rows:
     auto_edge_df = pd.DataFrame(auto_edge_rows).sort_values("Edge %", ascending=False).reset_index(drop=True)
     st.dataframe(auto_edge_df.head(40), use_container_width=True)
 else:
-    st.info("No sportsbook props matched yet. Add your Odds API key and make sure props are available.")
+    st.info("No sportsbook props matched yet.")
 
 # =========================================================
 # HITTER ODDS CHECKER
@@ -1328,56 +1318,59 @@ player_row = batters_df[batters_df["Batter"] == checker_player].iloc[0]
 player_key = normalize_prop_player_name(checker_player)
 market_key = HITTER_MARKET_MAP[checker_prop]
 
-available_player_odds = odds_df[
-    (odds_df["player_key"] == player_key) &
-    (odds_df["market"] == market_key)
-].copy()
-
-if checker_prop == "Hit":
-    target_line = 0.5
-elif checker_prop == "Home Run":
-    target_line = 0.5
-elif checker_prop == "RBI":
-    target_line = 0.5
+if odds_df.empty or "player_key" not in odds_df.columns:
+    st.info("No sportsbook hitter props loaded yet.")
 else:
-    target_line = 1.5
+    available_player_odds = odds_df[
+        (odds_df["player_key"] == player_key) &
+        (odds_df["market"] == market_key)
+    ].copy()
 
-if not available_player_odds.empty:
-    available_player_odds["line_num"] = available_player_odds["line"].apply(lambda x: safe_float(x, target_line))
-    available_player_odds["line_diff"] = (available_player_odds["line_num"] - target_line).abs()
-    available_player_odds = available_player_odds.sort_values(["line_diff", "price"], ascending=[True, False])
-    best_book_row = available_player_odds.iloc[0]
+    if checker_prop == "Hit":
+        target_line = 0.5
+    elif checker_prop == "Home Run":
+        target_line = 0.5
+    elif checker_prop == "RBI":
+        target_line = 0.5
+    else:
+        target_line = 1.5
 
-    book_odds = int(best_book_row["price"])
-    implied = implied_prob_from_american(book_odds) * 100
+    if not available_player_odds.empty:
+        available_player_odds["line_num"] = available_player_odds["line"].apply(lambda x: safe_float(x, target_line))
+        available_player_odds["line_diff"] = (available_player_odds["line_num"] - target_line).abs()
+        available_player_odds = available_player_odds.sort_values(["line_diff", "price"], ascending=[True, False])
+        best_book_row = available_player_odds.iloc[0]
 
-    prop_to_prob = {
-        "Hit": player_row["Hit %"],
-        "Home Run": player_row["HR %"],
-        "Total Bases": player_row["TB %"],
-        "RBI": player_row["RBI %"],
-    }
-    prop_to_fair = {
-        "Hit": player_row["Hit Fair Odds"],
-        "Home Run": player_row["HR Fair Odds"],
-        "Total Bases": player_row["TB Fair Odds"],
-        "RBI": player_row["RBI Fair Odds"],
-    }
+        book_odds = int(best_book_row["price"])
+        implied = implied_prob_from_american(book_odds) * 100
 
-    model_pct = float(prop_to_prob[checker_prop])
-    edge_pct = model_pct - implied
+        prop_to_prob = {
+            "Hit": player_row["Hit %"],
+            "Home Run": player_row["HR %"],
+            "Total Bases": player_row["TB %"],
+            "RBI": player_row["RBI %"],
+        }
+        prop_to_fair = {
+            "Hit": player_row["Hit Fair Odds"],
+            "Home Run": player_row["HR Fair Odds"],
+            "Total Bases": player_row["TB Fair Odds"],
+            "RBI": player_row["RBI Fair Odds"],
+        }
 
-    hc1, hc2, hc3, hc4 = st.columns(4)
-    hc1.metric("Sportsbook", str(best_book_row["bookmaker"]))
-    hc2.metric("Book Odds", str(book_odds))
-    hc3.metric("Model %", f"{model_pct:.1f}%")
-    hc4.metric("Fair Odds", str(prop_to_fair[checker_prop]))
+        model_pct = float(prop_to_prob[checker_prop])
+        edge_pct = model_pct - implied
 
-    st.write(f"**Book Implied %:** {implied:.1f}%")
-    st.write(f"**Edge %:** {edge_pct:.1f}%")
-    st.write(f"**Verdict:** {edge_grade(edge_pct)}")
-else:
-    st.info("No matching sportsbook prop found for that hitter/market yet.")
+        hc1, hc2, hc3, hc4 = st.columns(4)
+        hc1.metric("Sportsbook", str(best_book_row["bookmaker"]))
+        hc2.metric("Book Odds", str(book_odds))
+        hc3.metric("Model %", f"{model_pct:.1f}%")
+        hc4.metric("Fair Odds", str(prop_to_fair[checker_prop]))
+
+        st.write(f"**Book Implied %:** {implied:.1f}%")
+        st.write(f"**Edge %:** {edge_pct:.1f}%")
+        st.write(f"**Verdict:** {edge_grade(edge_pct)}")
+    else:
+        st.info("No matching sportsbook prop found for that hitter/market yet.")
 
 # =========================================================
 # PITCHER ODDS CHECKER
@@ -1393,45 +1386,48 @@ if not pitchers_df.empty:
     player_key = normalize_prop_player_name(pitcher_name_check)
     market_key, target_line = PITCHER_MARKET_MAP[k_line_check]
 
-    available_pitcher_odds = odds_df[
-        (odds_df["player_key"] == player_key) &
-        (odds_df["market"] == market_key)
-    ].copy()
-
-    if not available_pitcher_odds.empty:
-        available_pitcher_odds["line_num"] = available_pitcher_odds["line"].apply(lambda x: safe_float(x, target_line))
-        available_pitcher_odds["line_diff"] = (available_pitcher_odds["line_num"] - target_line).abs()
-        available_pitcher_odds = available_pitcher_odds.sort_values(["line_diff", "price"], ascending=[True, False])
-        best_book_row = available_pitcher_odds.iloc[0]
-
-        book_odds = int(best_book_row["price"])
-        implied = implied_prob_from_american(book_odds) * 100
-
-        line_to_prob = {
-            "Over 4.5": p_row["Over 4.5 %"],
-            "Over 5.5": p_row["Over 5.5 %"],
-            "Over 6.5": p_row["Over 6.5 %"],
-        }
-        line_to_fair = {
-            "Over 4.5": p_row["Over 4.5 Fair"],
-            "Over 5.5": p_row["Over 5.5 Fair"],
-            "Over 6.5": p_row["Over 6.5 Fair"],
-        }
-
-        model_pct = float(line_to_prob[k_line_check])
-        edge_pct = model_pct - implied
-
-        pc1, pc2, pc3, pc4 = st.columns(4)
-        pc1.metric("Sportsbook", str(best_book_row["bookmaker"]))
-        pc2.metric("Book Odds", str(book_odds))
-        pc3.metric("Model %", f"{model_pct:.1f}%")
-        pc4.metric("Fair Odds", str(line_to_fair[k_line_check]))
-
-        st.write(f"**Book Implied %:** {implied:.1f}%")
-        st.write(f"**Edge %:** {edge_pct:.1f}%")
-        st.write(f"**Verdict:** {edge_grade(edge_pct)}")
+    if odds_df.empty or "player_key" not in odds_df.columns:
+        st.info("No sportsbook pitcher props loaded yet.")
     else:
-        st.info("No matching pitcher strikeout prop found yet.")
+        available_pitcher_odds = odds_df[
+            (odds_df["player_key"] == player_key) &
+            (odds_df["market"] == market_key)
+        ].copy()
+
+        if not available_pitcher_odds.empty:
+            available_pitcher_odds["line_num"] = available_pitcher_odds["line"].apply(lambda x: safe_float(x, target_line))
+            available_pitcher_odds["line_diff"] = (available_pitcher_odds["line_num"] - target_line).abs()
+            available_pitcher_odds = available_pitcher_odds.sort_values(["line_diff", "price"], ascending=[True, False])
+            best_book_row = available_pitcher_odds.iloc[0]
+
+            book_odds = int(best_book_row["price"])
+            implied = implied_prob_from_american(book_odds) * 100
+
+            line_to_prob = {
+                "Over 4.5": p_row["Over 4.5 %"],
+                "Over 5.5": p_row["Over 5.5 %"],
+                "Over 6.5": p_row["Over 6.5 %"],
+            }
+            line_to_fair = {
+                "Over 4.5": p_row["Over 4.5 Fair"],
+                "Over 5.5": p_row["Over 5.5 Fair"],
+                "Over 6.5": p_row["Over 6.5 Fair"],
+            }
+
+            model_pct = float(line_to_prob[k_line_check])
+            edge_pct = model_pct - implied
+
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("Sportsbook", str(best_book_row["bookmaker"]))
+            pc2.metric("Book Odds", str(book_odds))
+            pc3.metric("Model %", f"{model_pct:.1f}%")
+            pc4.metric("Fair Odds", str(line_to_fair[k_line_check]))
+
+            st.write(f"**Book Implied %:** {implied:.1f}%")
+            st.write(f"**Edge %:** {edge_pct:.1f}%")
+            st.write(f"**Verdict:** {edge_grade(edge_pct)}")
+        else:
+            st.info("No matching pitcher strikeout prop found yet.")
 
 # =========================================================
 # MAIN TABLES
