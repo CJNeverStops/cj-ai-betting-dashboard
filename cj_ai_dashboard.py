@@ -52,7 +52,7 @@ PITCHERS_FILE = "pitchers.csv"
 PARKS_FILE = "parks.csv"
 
 # Paste your The Odds API key here
-ODDS_API_KEY = "PASTE_YOUR_KEY_HERE"
+ODDS_API_KEY = "a0fb1acf6e6147cf99f2dd2b20c1e265"
 ODDS_REGIONS = "us"
 PLAYER_PROP_MARKETS = [
     "batter_hits",
