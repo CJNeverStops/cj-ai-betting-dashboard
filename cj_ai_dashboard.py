@@ -12,7 +12,7 @@ import streamlit as st
 st.set_page_config(page_title="CJ Daily MLB AI Board", layout="wide")
 
 st.title("🔥 CJNeverStops Daily MLB AI Board")
-st.caption("Conservative MLB projection board with hitter props, pitcher Ks, team runs, and winners")
+st.caption("Conservative MLB projection board with hitter props, pitcher Ks, team runs, winners, weather, and wind direction")
 
 with st.expander("How to Read This Board", expanded=True):
     st.markdown(
@@ -271,6 +271,196 @@ def win_prob_from_run_diff(run_diff):
 
 
 # =========================================================
+# WEATHER HELPERS
+# =========================================================
+def park_weather_location(park_name: str):
+    park_map = {
+        "chase field": ("Phoenix", "AZ"),
+        "truist park": ("Atlanta", "GA"),
+        "oriole park at camden yards": ("Baltimore", "MD"),
+        "fenway park": ("Boston", "MA"),
+        "wrigley field": ("Chicago", "IL"),
+        "guaranteed rate field": ("Chicago", "IL"),
+        "great american ball park": ("Cincinnati", "OH"),
+        "progressive field": ("Cleveland", "OH"),
+        "coors field": ("Denver", "CO"),
+        "comerica park": ("Detroit", "MI"),
+        "minute maid park": ("Houston", "TX"),
+        "kauffman stadium": ("Kansas City", "MO"),
+        "angel stadium": ("Anaheim", "CA"),
+        "dodger stadium": ("Los Angeles", "CA"),
+        "loandepot park": ("Miami", "FL"),
+        "american family field": ("Milwaukee", "WI"),
+        "target field": ("Minneapolis", "MN"),
+        "citi field": ("Queens", "NY"),
+        "yankee stadium": ("Bronx", "NY"),
+        "sutter health park": ("West Sacramento", "CA"),
+        "citizens bank park": ("Philadelphia", "PA"),
+        "pnc park": ("Pittsburgh", "PA"),
+        "petco park": ("San Diego", "CA"),
+        "oracle park": ("San Francisco", "CA"),
+        "t-mobile park": ("Seattle", "WA"),
+        "busch stadium": ("St. Louis", "MO"),
+        "george m. steinbrenner field": ("Tampa", "FL"),
+        "globe life field": ("Arlington", "TX"),
+        "rogers centre": ("Toronto", "ON"),
+        "nationals park": ("Washington", "DC"),
+    }
+    return park_map.get(str(park_name).strip().lower(), ("", ""))
+
+
+@st.cache_data(ttl=1800)
+def get_weather_for_city(city: str, state: str = ""):
+    if not city:
+        return {
+            "temp_f": 70,
+            "wind_mph": 8,
+            "humidity": 50,
+            "desc": "",
+            "wind_dir_16": "",
+            "wind_dir_deg": 180,
+        }
+
+    query = f"{city},{state}" if state else city
+    url = "https://wttr.in/{}?format=j1".format(query.replace(" ", "%20"))
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        current = data["current_condition"][0]
+        weather_desc = current.get("weatherDesc", [{}])[0].get("value", "")
+        temp_f = safe_float(current.get("temp_F"), 70)
+        wind_mph = safe_float(current.get("windspeedMiles"), 8)
+        humidity = safe_float(current.get("humidity"), 50)
+        wind_dir_16 = current.get("winddir16Point", "")
+        wind_dir_deg = safe_float(current.get("winddirDegree"), 180)
+
+        return {
+            "temp_f": temp_f,
+            "wind_mph": wind_mph,
+            "humidity": humidity,
+            "desc": weather_desc,
+            "wind_dir_16": wind_dir_16,
+            "wind_dir_deg": wind_dir_deg,
+        }
+    except Exception:
+        return {
+            "temp_f": 70,
+            "wind_mph": 8,
+            "humidity": 50,
+            "desc": "",
+            "wind_dir_16": "",
+            "wind_dir_deg": 180,
+        }
+
+
+def angle_diff(a: float, b: float) -> float:
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
+
+
+def get_park_outfield_bearing(park_name: str) -> float:
+    bearings = {
+        "chase field": 20,
+        "truist park": 30,
+        "oriole park at camden yards": 45,
+        "fenway park": 50,
+        "wrigley field": 35,
+        "guaranteed rate field": 20,
+        "great american ball park": 15,
+        "progressive field": 40,
+        "coors field": 20,
+        "comerica park": 25,
+        "minute maid park": 35,
+        "kauffman stadium": 30,
+        "angel stadium": 25,
+        "dodger stadium": 35,
+        "loandepot park": 25,
+        "american family field": 30,
+        "target field": 40,
+        "citi field": 20,
+        "yankee stadium": 30,
+        "sutter health park": 25,
+        "citizens bank park": 20,
+        "pnc park": 35,
+        "petco park": 25,
+        "oracle park": 35,
+        "t-mobile park": 25,
+        "busch stadium": 25,
+        "george m. steinbrenner field": 25,
+        "globe life field": 20,
+        "rogers centre": 25,
+        "nationals park": 25,
+    }
+    return bearings.get(str(park_name).strip().lower(), 25)
+
+
+def estimate_wind_direction_impact(wind_dir_deg: float, wind_mph: float, park_name: str):
+    out_bearing = get_park_outfield_bearing(park_name)
+
+    out_diff = angle_diff(wind_dir_deg, out_bearing)
+    in_diff = angle_diff(wind_dir_deg, (out_bearing + 180) % 360)
+
+    cross_strength = min(
+        angle_diff(wind_dir_deg, (out_bearing + 90) % 360),
+        angle_diff(wind_dir_deg, (out_bearing - 90) % 360),
+    )
+
+    out_factor = max(0.0, 1 - (out_diff / 90))
+    in_factor = max(0.0, 1 - (in_diff / 90))
+    cross_factor = max(0.0, 1 - (cross_strength / 90))
+
+    hr_dir_mult = 1 + (wind_mph * 0.010 * out_factor) - (wind_mph * 0.012 * in_factor)
+    run_dir_mult = 1 + (wind_mph * 0.006 * out_factor) - (wind_mph * 0.007 * in_factor)
+    hit_dir_mult = 1 + (wind_mph * 0.003 * cross_factor) + (wind_mph * 0.004 * out_factor) - (wind_mph * 0.004 * in_factor)
+
+    return {
+        "hr_dir_mult": clamp(hr_dir_mult, 0.82, 1.20),
+        "run_dir_mult": clamp(run_dir_mult, 0.88, 1.14),
+        "hit_dir_mult": clamp(hit_dir_mult, 0.90, 1.10),
+        "wind_out_score": round(out_factor, 3),
+        "wind_in_score": round(in_factor, 3),
+        "wind_cross_score": round(cross_factor, 3),
+    }
+
+
+def estimate_weather_multipliers(temp_f, wind_mph, humidity, desc="", wind_dir_deg=180, park_name=""):
+    desc_l = str(desc).lower()
+
+    temp_run = 1.00 + ((temp_f - 70) * 0.0035)
+    temp_hr = 1.00 + ((temp_f - 70) * 0.0050)
+
+    humid_run = 1.00 + ((humidity - 50) * 0.0012)
+    humid_hr = 1.00 + ((humidity - 50) * 0.0018)
+
+    rain_penalty = 1.00
+    if "rain" in desc_l or "shower" in desc_l or "storm" in desc_l:
+        rain_penalty = 0.94
+    if "snow" in desc_l:
+        rain_penalty = 0.90
+
+    wind_dir = estimate_wind_direction_impact(
+        wind_dir_deg=wind_dir_deg,
+        wind_mph=wind_mph,
+        park_name=park_name,
+    )
+
+    run_mult = temp_run * humid_run * rain_penalty * wind_dir["run_dir_mult"]
+    hr_mult = temp_hr * humid_hr * rain_penalty * wind_dir["hr_dir_mult"]
+    hit_mult = rain_penalty * ((run_mult * 0.55) + (hr_mult * 0.45)) * wind_dir["hit_dir_mult"]
+
+    return {
+        "run_mult": clamp(run_mult, 0.88, 1.15),
+        "hr_mult": clamp(hr_mult, 0.82, 1.24),
+        "hit_mult": clamp(hit_mult, 0.90, 1.14),
+        "wind_out_score": wind_dir["wind_out_score"],
+        "wind_in_score": wind_dir["wind_in_score"],
+        "wind_cross_score": wind_dir["wind_cross_score"],
+    }
+
+
+# =========================================================
 # MLB API HELPERS
 # =========================================================
 @st.cache_data(ttl=1800)
@@ -448,8 +638,6 @@ batters["_team_norm"] = batters["_team_auto"].map(norm_text)
 # =========================================================
 with st.sidebar:
     st.header("Auto Slate")
-    weather_boost_default = st.slider("Default weather boost", 0.90, 1.15, 1.00, 0.01)
-    team_total_default = st.slider("Default team total", 3.0, 6.5, 4.2, 0.1)
     show_unconfirmed = st.toggle("Show fallback team hitters when lineups aren't posted", value=True)
     team_col_pick = st.selectbox(
         "Batter team column",
@@ -463,7 +651,7 @@ else:
     batters["_team_norm"] = batters[team_col_pick].astype(str).map(norm_text)
 
 # =========================================================
-# SCHEDULE + MATCHUPS
+# SCHEDULE + WEATHER
 # =========================================================
 games, games_err = get_today_schedule()
 
@@ -475,6 +663,63 @@ if not games:
 schedule_df = pd.DataFrame(games)
 st.dataframe(schedule_df, use_container_width=True)
 
+weather_map = {}
+weather_rows = []
+
+for game in games:
+    city, state = park_weather_location(game["park"])
+    wx = get_weather_for_city(city, state)
+    wx_mult = estimate_weather_multipliers(
+        wx["temp_f"],
+        wx["wind_mph"],
+        wx["humidity"],
+        wx["desc"],
+        wx["wind_dir_deg"],
+        game["park"],
+    )
+
+    weather_map[game["gamePk"]] = {
+        "temp_f": wx["temp_f"],
+        "wind_mph": wx["wind_mph"],
+        "humidity": wx["humidity"],
+        "desc": wx["desc"],
+        "wind_dir_16": wx["wind_dir_16"],
+        "wind_dir_deg": wx["wind_dir_deg"],
+        "run_mult": wx_mult["run_mult"],
+        "hr_mult": wx_mult["hr_mult"],
+        "hit_mult": wx_mult["hit_mult"],
+        "wind_out_score": wx_mult["wind_out_score"],
+        "wind_in_score": wx_mult["wind_in_score"],
+        "wind_cross_score": wx_mult["wind_cross_score"],
+    }
+
+    weather_rows.append(
+        {
+            "Park": game["park"],
+            "Matchup": f'{game["away_team"]} @ {game["home_team"]}',
+            "Temp": round(wx["temp_f"], 1),
+            "Wind MPH": round(wx["wind_mph"], 1),
+            "Wind Dir": wx["wind_dir_16"],
+            "Wind Deg": round(wx["wind_dir_deg"], 1),
+            "Humidity": round(wx["humidity"], 1),
+            "Conditions": wx["desc"],
+            "Run Mult": round(wx_mult["run_mult"], 3),
+            "HR Mult": round(wx_mult["hr_mult"], 3),
+            "Hit Mult": round(wx_mult["hit_mult"], 3),
+            "Wind Out": wx_mult["wind_out_score"],
+            "Wind In": wx_mult["wind_in_score"],
+            "Wind Cross": wx_mult["wind_cross_score"],
+        }
+    )
+
+weather_df = pd.DataFrame(weather_rows)
+
+st.subheader("🌤️ Weather Impact")
+st.dataframe(weather_df, use_container_width=True)
+
+# =========================================================
+# MATCHUPS
+# =========================================================
 auto_rows = []
 skipped = []
 lineup_status_rows = []
@@ -486,6 +731,11 @@ for game in games:
     home_pitcher = game["home_pitcher"]
     park = game["park"]
     game_pk = game["gamePk"]
+
+    wx = weather_map.get(game_pk, {})
+    hit_weather_mult = safe_float(wx.get("hit_mult"), 1.0)
+    hr_weather_mult = safe_float(wx.get("hr_mult"), 1.0)
+    run_weather_mult = safe_float(wx.get("run_mult"), 1.0)
 
     lineups = get_game_lineups(game_pk)
     away_lineup = lineups.get("away", [])
@@ -515,8 +765,9 @@ for game in games:
                         "lineup_spot": hitter.get("lineup_spot", 5),
                         "team": away_team,
                         "opp_team": home_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
+                        "hit_weather_mult": hit_weather_mult,
+                        "hr_weather_mult": hr_weather_mult,
+                        "run_weather_mult": run_weather_mult,
                     }
                 )
         elif show_unconfirmed:
@@ -533,8 +784,9 @@ for game in games:
                         "lineup_spot": 5,
                         "team": away_team,
                         "opp_team": home_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
+                        "hit_weather_mult": hit_weather_mult,
+                        "hr_weather_mult": hr_weather_mult,
+                        "run_weather_mult": run_weather_mult,
                     }
                 )
 
@@ -551,8 +803,9 @@ for game in games:
                         "lineup_spot": hitter.get("lineup_spot", 5),
                         "team": home_team,
                         "opp_team": away_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
+                        "hit_weather_mult": hit_weather_mult,
+                        "hr_weather_mult": hr_weather_mult,
+                        "run_weather_mult": run_weather_mult,
                     }
                 )
         elif show_unconfirmed:
@@ -569,8 +822,9 @@ for game in games:
                         "lineup_spot": 5,
                         "team": home_team,
                         "opp_team": away_team,
-                        "weather_boost": weather_boost_default,
-                        "team_total": team_total_default,
+                        "hit_weather_mult": hit_weather_mult,
+                        "hr_weather_mult": hr_weather_mult,
+                        "run_weather_mult": run_weather_mult,
                     }
                 )
 
@@ -643,15 +897,23 @@ def pitcher_hr_tendency(p):
 # =========================================================
 # BATTER PROJECTION MODEL
 # =========================================================
-def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_hand, lineup_spot, weather_boost, team_total):
+def calc_batter_board(
+    batter_row,
+    pitcher_row,
+    park_key,
+    batter_hand,
+    pitcher_hand,
+    lineup_spot,
+    hit_weather_mult,
+    hr_weather_mult,
+    run_weather_mult,
+):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
     park = get_park_factors(park_key)
 
     platoon = platoon_boost(batter_hand, pitcher_hand)
-    weather_mult = safe_float(weather_boost, 1.00)
-    team_total_v = safe_float(team_total, 4.2)
-    team_total_mult = clamp(team_total_v / 4.2, 0.88, 1.15)
+    team_total_mult = clamp(run_weather_mult, 0.88, 1.15)
     plate_appearances = estimate_plate_appearances(lineup_spot)
 
     hit_score_raw = (
@@ -662,7 +924,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
         - 1.3 * (p["k_rate"] - 0.22)
         - 1.0 * (p["xba"] - 0.240)
     )
-    hit_prob_pa = logistic(-1.35 + hit_score_raw) * park["hit_factor"] * platoon
+    hit_prob_pa = logistic(-1.35 + hit_score_raw) * park["hit_factor"] * platoon * hit_weather_mult
     hit_prob_pa = clamp(hit_prob_pa, 0.025, 0.55)
     hit_prob = 1 - (1 - hit_prob_pa) ** plate_appearances
     hit_prob = clamp(hit_prob, 0.18, 0.88)
@@ -678,7 +940,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     hr_prob_pa = logistic(-3.9 + hr_score_raw)
     hr_prob = 1 - (1 - hr_prob_pa) ** plate_appearances
     hr_prob *= park["hr_factor"]
-    hr_prob *= weather_mult
+    hr_prob *= hr_weather_mult
     hr_prob *= platoon
     hr_prob = clamp(hr_prob, 0.01, 0.28)
 
@@ -693,7 +955,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     tb_prob_pa = logistic(-2.2 + tb_score_raw)
     tb_prob_pa = clamp(tb_prob_pa, 0.02, 0.40)
     tb_prob = 1 - (1 - tb_prob_pa) ** (plate_appearances * 0.92)
-    tb_prob *= park["hit_factor"]
+    tb_prob *= park["hit_factor"] * hit_weather_mult
     tb_prob *= (park["hr_factor"] ** 0.20)
     tb_prob *= platoon
     tb_prob = clamp(tb_prob, 0.10, 0.72)
@@ -707,7 +969,7 @@ def calc_batter_board(batter_row, pitcher_row, park_key, batter_hand, pitcher_ha
     rbi_prob_pa = logistic(-2.55 + rbi_score_raw)
     rbi_prob_pa = clamp(rbi_prob_pa, 0.015, 0.28)
     rbi_prob = 1 - (1 - rbi_prob_pa) ** (plate_appearances * 0.95)
-    rbi_prob *= park["hit_factor"]
+    rbi_prob *= park["hit_factor"] * hit_weather_mult
     rbi_prob *= team_total_mult
     rbi_prob *= platoon
     rbi_prob *= rbi_lineup_boost(lineup_spot)
@@ -805,8 +1067,9 @@ for _, row in matchups.iterrows():
         batter_hand=row.get("batter_hand", ""),
         pitcher_hand=row.get("pitcher_hand", ""),
         lineup_spot=row.get("lineup_spot", 5),
-        weather_boost=row.get("weather_boost", weather_boost_default),
-        team_total=row.get("team_total", team_total_default),
+        hit_weather_mult=row.get("hit_weather_mult", 1.0),
+        hr_weather_mult=row.get("hr_weather_mult", 1.0),
+        run_weather_mult=row.get("run_weather_mult", 1.0),
     )
 
     rows.append(
@@ -869,18 +1132,21 @@ for game in games:
         home_pitch_adj = 1 + ((hp["xwoba"] - 0.310) * 1.8) - ((hp["k_rate"] - 0.22) * 0.9)
         home_pitch_adj = clamp(home_pitch_adj, 0.82, 1.18)
 
-    away_team_total = team_total_default * away_pitch_adj
-    home_team_total = team_total_default * home_pitch_adj
+    wx = weather_map.get(game["gamePk"], {})
+    run_mult = safe_float(wx.get("run_mult"), 1.0)
+
+    away_team_total = 4.2 * away_pitch_adj
+    home_team_total = 4.2 * home_pitch_adj
 
     away_runs = estimate_team_runs(
         team_total=away_team_total,
-        weather_boost=weather_boost_default,
+        weather_boost=run_mult,
         park_hit_factor=park["hit_factor"],
         park_hr_factor=park["hr_factor"],
     )
     home_runs = estimate_team_runs(
         team_total=home_team_total,
-        weather_boost=weather_boost_default,
+        weather_boost=run_mult,
         park_hit_factor=park["hit_factor"],
         park_hr_factor=park["hr_factor"],
     )
