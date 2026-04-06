@@ -12,7 +12,7 @@ import streamlit as st
 st.set_page_config(page_title="CJ Daily MLB AI Board", layout="wide")
 
 st.title("🔥 CJNeverStops Daily MLB AI Board")
-st.caption("Conservative MLB projection board with hitter props, pitcher Ks, team runs, winners, weather, and wind direction")
+st.caption("Conservative MLB projection board with hitter props, pitcher Ks, team runs, winners, and weather built into the reasons")
 
 with st.expander("How to Read This Board", expanded=True):
     st.markdown(
@@ -268,6 +268,26 @@ def estimate_team_runs(team_total, weather_boost=1.0, park_hit_factor=1.0, park_
 
 def win_prob_from_run_diff(run_diff):
     return logistic(run_diff * 0.55)
+
+
+def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
+    if hr_wx >= 1.08 or wind_out >= 0.60:
+        return "🌬️ Great hitting weather"
+    if hr_wx <= 0.94 or wind_in >= 0.60:
+        return "🛑 Tough hitting weather"
+    if hit_wx >= 1.04:
+        return "✅ Helpful weather"
+    return "➖ Neutral weather"
+
+
+def quick_reason_summary(row):
+    weather = weather_reason_label(
+        safe_float(row.get("Hit Wx"), 1.0),
+        safe_float(row.get("HR Wx"), 1.0),
+        safe_float(row.get("Wind Out"), 0.0),
+        safe_float(row.get("Wind In"), 0.0),
+    )
+    return f'{weather} | Platoon {row.get("Platoon", 1.0):.2f} | Park HR {row.get("HR Park", 1.0):.2f}'
 
 
 # =========================================================
@@ -664,7 +684,6 @@ schedule_df = pd.DataFrame(games)
 st.dataframe(schedule_df, use_container_width=True)
 
 weather_map = {}
-weather_rows = []
 
 for game in games:
     city, state = park_weather_location(game["park"])
@@ -692,30 +711,6 @@ for game in games:
         "wind_in_score": wx_mult["wind_in_score"],
         "wind_cross_score": wx_mult["wind_cross_score"],
     }
-
-    weather_rows.append(
-        {
-            "Park": game["park"],
-            "Matchup": f'{game["away_team"]} @ {game["home_team"]}',
-            "Temp": round(wx["temp_f"], 1),
-            "Wind MPH": round(wx["wind_mph"], 1),
-            "Wind Dir": wx["wind_dir_16"],
-            "Wind Deg": round(wx["wind_dir_deg"], 1),
-            "Humidity": round(wx["humidity"], 1),
-            "Conditions": wx["desc"],
-            "Run Mult": round(wx_mult["run_mult"], 3),
-            "HR Mult": round(wx_mult["hr_mult"], 3),
-            "Hit Mult": round(wx_mult["hit_mult"], 3),
-            "Wind Out": wx_mult["wind_out_score"],
-            "Wind In": wx_mult["wind_in_score"],
-            "Wind Cross": wx_mult["wind_cross_score"],
-        }
-    )
-
-weather_df = pd.DataFrame(weather_rows)
-
-st.subheader("🌤️ Weather Impact")
-st.dataframe(weather_df, use_container_width=True)
 
 # =========================================================
 # MATCHUPS
@@ -768,6 +763,13 @@ for game in games:
                         "hit_weather_mult": hit_weather_mult,
                         "hr_weather_mult": hr_weather_mult,
                         "run_weather_mult": run_weather_mult,
+                        "temp_f": wx.get("temp_f", 70),
+                        "wind_mph": wx.get("wind_mph", 8),
+                        "wind_dir_16": wx.get("wind_dir_16", ""),
+                        "conditions": wx.get("desc", ""),
+                        "wind_out_score": wx.get("wind_out_score", 0),
+                        "wind_in_score": wx.get("wind_in_score", 0),
+                        "wind_cross_score": wx.get("wind_cross_score", 0),
                     }
                 )
         elif show_unconfirmed:
@@ -787,6 +789,13 @@ for game in games:
                         "hit_weather_mult": hit_weather_mult,
                         "hr_weather_mult": hr_weather_mult,
                         "run_weather_mult": run_weather_mult,
+                        "temp_f": wx.get("temp_f", 70),
+                        "wind_mph": wx.get("wind_mph", 8),
+                        "wind_dir_16": wx.get("wind_dir_16", ""),
+                        "conditions": wx.get("desc", ""),
+                        "wind_out_score": wx.get("wind_out_score", 0),
+                        "wind_in_score": wx.get("wind_in_score", 0),
+                        "wind_cross_score": wx.get("wind_cross_score", 0),
                     }
                 )
 
@@ -806,6 +815,13 @@ for game in games:
                         "hit_weather_mult": hit_weather_mult,
                         "hr_weather_mult": hr_weather_mult,
                         "run_weather_mult": run_weather_mult,
+                        "temp_f": wx.get("temp_f", 70),
+                        "wind_mph": wx.get("wind_mph", 8),
+                        "wind_dir_16": wx.get("wind_dir_16", ""),
+                        "conditions": wx.get("desc", ""),
+                        "wind_out_score": wx.get("wind_out_score", 0),
+                        "wind_in_score": wx.get("wind_in_score", 0),
+                        "wind_cross_score": wx.get("wind_cross_score", 0),
                     }
                 )
         elif show_unconfirmed:
@@ -825,6 +841,13 @@ for game in games:
                         "hit_weather_mult": hit_weather_mult,
                         "hr_weather_mult": hr_weather_mult,
                         "run_weather_mult": run_weather_mult,
+                        "temp_f": wx.get("temp_f", 70),
+                        "wind_mph": wx.get("wind_mph", 8),
+                        "wind_dir_16": wx.get("wind_dir_16", ""),
+                        "conditions": wx.get("desc", ""),
+                        "wind_out_score": wx.get("wind_out_score", 0),
+                        "wind_in_score": wx.get("wind_in_score", 0),
+                        "wind_cross_score": wx.get("wind_cross_score", 0),
                     }
                 )
 
@@ -1092,6 +1115,16 @@ for _, row in matchups.iterrows():
             "HR Park": round(calc["hr_factor"], 2),
             "Hit Park": round(calc["hit_factor"], 2),
             "Model Score": round(calc["weighted_score"], 1),
+            "Temp": round(safe_float(row.get("temp_f", 70)), 1),
+            "Wind MPH": round(safe_float(row.get("wind_mph", 8)), 1),
+            "Wind Dir": row.get("wind_dir_16", ""),
+            "Conditions": row.get("conditions", ""),
+            "Hit Wx": round(safe_float(row.get("hit_weather_mult", 1.0)), 3),
+            "HR Wx": round(safe_float(row.get("hr_weather_mult", 1.0)), 3),
+            "Run Wx": round(safe_float(row.get("run_weather_mult", 1.0)), 3),
+            "Wind Out": round(safe_float(row.get("wind_out_score", 0.0)), 3),
+            "Wind In": round(safe_float(row.get("wind_in_score", 0.0)), 3),
+            "Wind Cross": round(safe_float(row.get("wind_cross_score", 0.0)), 3),
         }
     )
 
@@ -1103,6 +1136,7 @@ if batters_df.empty:
         st.write(skipped)
     st.stop()
 
+batters_df["Why"] = batters_df.apply(quick_reason_summary, axis=1)
 batters_df = apply_relative_grades(batters_df, "Model Score", "Best Grade")
 
 # =========================================================
@@ -1195,6 +1229,13 @@ for _, r in batters_df.iterrows():
             "Fair Odds": best_fair,
             "Model Score": r["Model Score"],
             "Grade": r["Best Grade"],
+            "Weather": weather_reason_label(
+                r["Hit Wx"],
+                r["HR Wx"],
+                r["Wind Out"],
+                r["Wind In"],
+            ),
+            "Why": r["Why"],
         }
     )
 
@@ -1291,7 +1332,10 @@ def grade_badge(g):
     return "⬜ ❌ PASS"
 
 top_display["Grade"] = top_display["Grade"].apply(grade_badge)
-st.dataframe(top_display, use_container_width=True)
+st.dataframe(
+    top_display[["Player", "Pitcher", "Park", "Best Prop", "Best Prop %", "Fair Odds", "Model Score", "Grade", "Weather", "Why"]],
+    use_container_width=True,
+)
 
 st.subheader("🎯 Best Pitcher Strikeout Chances")
 if pitchers_df.empty:
@@ -1302,16 +1346,28 @@ else:
     st.dataframe(pitchers_show.head(15), use_container_width=True)
 
 st.subheader("⚾ Best Batter Hit Chances")
-st.dataframe(batters_df.sort_values("Hit %", ascending=False).head(15), use_container_width=True)
+st.dataframe(
+    batters_df.sort_values("Hit %", ascending=False)[["Batter", "Pitcher", "Park", "Hit %", "Hit Fair Odds", "Model Score", "Why"]].head(15),
+    use_container_width=True,
+)
 
 st.subheader("💣 Best Home Run Chances")
-st.dataframe(batters_df.sort_values("HR %", ascending=False).head(15), use_container_width=True)
+st.dataframe(
+    batters_df.sort_values("HR %", ascending=False)[["Batter", "Pitcher", "Park", "HR %", "HR Fair Odds", "Model Score", "Why"]].head(15),
+    use_container_width=True,
+)
 
 st.subheader("🏃 Best Total Bases Chances")
-st.dataframe(batters_df.sort_values("TB %", ascending=False).head(15), use_container_width=True)
+st.dataframe(
+    batters_df.sort_values("TB %", ascending=False)[["Batter", "Pitcher", "Park", "TB %", "TB Fair Odds", "Model Score", "Why"]].head(15),
+    use_container_width=True,
+)
 
 st.subheader("💰 Best RBI Chances")
-st.dataframe(batters_df.sort_values("RBI %", ascending=False).head(15), use_container_width=True)
+st.dataframe(
+    batters_df.sort_values("RBI %", ascending=False)[["Batter", "Pitcher", "Park", "RBI %", "RBI Fair Odds", "Model Score", "Why"]].head(15),
+    use_container_width=True,
+)
 
 # =========================================================
 # WHY THESE PICKS
@@ -1320,16 +1376,28 @@ st.subheader("🧠 Why These Picks (Top 5 Breakdown)")
 top5 = best_picks_df.head(5)
 
 for _, rec in top5.iterrows():
+    rec_row = batters_df[batters_df["Batter"] == rec["Player"]].iloc[0]
     batter_row = batters[batters["_keys"].apply(lambda s: norm_text(rec["Player"]) in s)].iloc[0]
     pitcher_row = pitchers[pitchers["_keys"].apply(lambda s: norm_text(rec["Pitcher"]) in s)].iloc[0]
 
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
 
+    weather_note = weather_reason_label(
+        rec_row["Hit Wx"],
+        rec_row["HR Wx"],
+        rec_row["Wind Out"],
+        rec_row["Wind In"],
+    )
+
     st.markdown(f"### 🔥 {rec['Player']} ({rec['Best Prop']})")
     st.write(f"""
 **Matchup:** vs {rec['Pitcher']}  
-**Park:** {rec['Park']}
+**Park:** {rec['Park']}  
+**Weather impact:** {weather_note}  
+**Temp / Wind:** {rec_row["Temp"]}°F, {rec_row["Wind MPH"]} mph {rec_row["Wind Dir"]}  
+**Conditions:** {rec_row["Conditions"]}  
+**Weather multipliers:** Hit {rec_row["Hit Wx"]} | HR {rec_row["HR Wx"]} | Run {rec_row["Run Wx"]}
 
 **Why the model likes this:**
 - Batter xBA: {round(b['xba'], 3)}
@@ -1341,6 +1409,7 @@ for _, rec in top5.iterrows():
 - Pitcher xSLG allowed: {round(p['xslg'], 3)}
 - Pitcher K%: {round(p['k_rate'] * 100, 1)}%
 
+**Quick reason summary:** {rec_row["Why"]}  
 **Best Prop %:** {rec['Best Prop %']}  
 **Fair Odds:** {rec['Fair Odds']}  
 **Model Score:** {rec['Model Score']}  
