@@ -170,6 +170,33 @@ def prob_to_fair_american(prob: float):
     return int(round(((1 - prob) / prob) * 100))
 
 
+def estimate_plate_appearances(lineup_spot) -> float:
+    try:
+        s = int(float(lineup_spot))
+    except Exception:
+        return 4.2
+    pa_map = {
+        1: 4.85,
+        2: 4.75,
+        3: 4.65,
+        4: 4.55,
+        5: 4.45,
+        6: 4.30,
+        7: 4.15,
+        8: 4.00,
+        9: 3.85,
+    }
+    return pa_map.get(s, 4.2)
+
+
+def platoon_boost(batter_hand, pitcher_hand) -> float:
+    bh = str(batter_hand).strip().upper()
+    ph = str(pitcher_hand).strip().upper()
+    if bh in ["L", "R"] and ph in ["L", "R"]:
+        return 1.03 if bh != ph else 0.98
+    return 1.00
+
+
 def team_abbrev_map() -> Dict[str, str]:
     return {
         "arizona diamondbacks": "ARI",
@@ -653,6 +680,7 @@ for game in games:
                         "team": away_team,
                         "pitcher_team": home_team,
                         "batter_hand": hitter.get("batter_hand", ""),
+                        "pitcher_hand": "",
                         "lineup_spot": hitter.get("lineup_spot", None),
                         "lineup_source": "RotoWire",
                         "game_status": "🟢 Scheduled",
@@ -671,6 +699,7 @@ for game in games:
                         "team": away_team,
                         "pitcher_team": home_team,
                         "batter_hand": "",
+                        "pitcher_hand": "",
                         "lineup_spot": None,
                         "lineup_source": "Team Fallback",
                         "game_status": "🟢 Scheduled",
@@ -689,6 +718,7 @@ for game in games:
                         "team": home_team,
                         "pitcher_team": away_team,
                         "batter_hand": hitter.get("batter_hand", ""),
+                        "pitcher_hand": "",
                         "lineup_spot": hitter.get("lineup_spot", None),
                         "lineup_source": "RotoWire",
                         "game_status": "🟢 Scheduled",
@@ -707,6 +737,7 @@ for game in games:
                         "team": home_team,
                         "pitcher_team": away_team,
                         "batter_hand": "",
+                        "pitcher_hand": "",
                         "lineup_spot": None,
                         "lineup_source": "Team Fallback",
                         "game_status": "🟢 Scheduled",
@@ -778,9 +809,16 @@ def get_park_factors(park_key):
     if row.empty:
         return {"hr_factor": 1.00, "hit_factor": 1.00}
     row = row.iloc[0]
+
+    hr_raw = safe_float(row[park_hr_col], 1.00) if park_hr_col else 1.00
+    hit_raw = safe_float(row[park_hit_col], 1.00) if park_hit_col else 1.00
+
+    hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
+    hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
+
     return {
-        "hr_factor": safe_float(row[park_hr_col], 1.00) / 100.0 if park_hr_col and safe_float(row[park_hr_col], 1.0) > 3 else safe_float(row[park_hr_col], 1.0) if park_hr_col else 1.0,
-        "hit_factor": safe_float(row[park_hit_col], 1.00) / 100.0 if park_hit_col and safe_float(row[park_hit_col], 1.0) > 3 else safe_float(row[park_hit_col], 1.0) if park_hit_col else 1.0,
+        "hr_factor": hr_factor,
+        "hit_factor": hit_factor,
     }
 
 
@@ -821,6 +859,16 @@ def flame_match(value: float) -> str:
     return "—"
 
 
+def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
+    if hr_wx >= 1.08 or wind_out >= 0.60:
+        return "Great hitting weather"
+    if hr_wx <= 0.94 or wind_in >= 0.60:
+        return "Tough hitting weather"
+    if hr_wx >= 1.03:
+        return "Helpful weather"
+    return "Neutral weather"
+
+
 def calc_hr_model(batter_row, pitcher_row, matchup_row):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
@@ -828,40 +876,40 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
 
     lineup_spot = matchup_row.get("lineup_spot", None)
     lineup_value = estimate_plate_appearances(lineup_spot)
-    platoon_mult = platoon_boost(matchup_row.get("batter_hand", ""), "")
+    platoon_mult = platoon_boost(matchup_row.get("batter_hand", ""), matchup_row.get("pitcher_hand", ""))
     hr_weather_mult = safe_float(matchup_row.get("hr_weather_mult", 1.0), 1.0)
 
     batter_power = (
-        0.35 * scale01(b["xslg"], 0.300, 0.750) +
-        0.30 * scale01(b["barrel"], 0.02, 0.25) +
-        0.20 * scale01(b["hardhit"], 0.20, 0.65) +
-        0.15 * b["recent_form_score"]
+        0.35 * scale01(b["xslg"], 0.300, 0.750)
+        + 0.30 * scale01(b["barrel"], 0.02, 0.25)
+        + 0.20 * scale01(b["hardhit"], 0.20, 0.65)
+        + 0.15 * b["recent_form_score"]
     )
     batter_power = clamp(batter_power, 0.0, 1.0)
 
     pitcher_vulnerability = (
-        0.35 * scale01(p["xslg"], 0.300, 0.650) +
-        0.25 * scale01(p["barrel"], 0.02, 0.18) +
-        0.20 * scale01(p["hardhit"], 0.20, 0.60) +
-        0.20 * scale01(p["hr9"], 0.3, 2.2)
+        0.35 * scale01(p["xslg"], 0.300, 0.650)
+        + 0.25 * scale01(p["barrel"], 0.02, 0.18)
+        + 0.20 * scale01(p["hardhit"], 0.20, 0.60)
+        + 0.20 * scale01(p["hr9"], 0.3, 2.2)
     )
     pitcher_vulnerability = clamp(pitcher_vulnerability, 0.0, 1.0)
 
     context_score = (
-        0.30 * scale01(park["hr_factor"], 0.80, 1.25) +
-        0.30 * scale01(hr_weather_mult, 0.85, 1.20) +
-        0.20 * scale01(platoon_mult, 0.95, 1.05) +
-        0.20 * scale01(lineup_value, 3.8, 4.9)
+        0.30 * scale01(park["hr_factor"], 0.80, 1.25)
+        + 0.30 * scale01(hr_weather_mult, 0.85, 1.20)
+        + 0.20 * scale01(platoon_mult, 0.95, 1.05)
+        + 0.20 * scale01(lineup_value, 3.8, 4.9)
     )
     context_score = clamp(context_score, 0.0, 1.0)
 
     power_match = clamp((0.55 * batter_power) + (0.45 * pitcher_vulnerability), 0.0, 1.0)
 
     raw_hr_score = (
-        0.38 * batter_power +
-        0.27 * pitcher_vulnerability +
-        0.20 * context_score +
-        0.15 * power_match
+        0.38 * batter_power
+        + 0.27 * pitcher_vulnerability
+        + 0.20 * context_score
+        + 0.15 * power_match
     )
 
     hr_probability = 0.08 + (raw_hr_score * 0.18)
@@ -877,18 +925,13 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "recent_form_label": recent_form_label(b["recent_form_score"]),
         "grade": hr_grade(hr_probability),
         "fair_odds": prob_to_fair_american(hr_probability),
-        "weather_note": weather_reason_label(1.0, hr_weather_mult, safe_float(matchup_row.get("wind_out_score"), 0.0), safe_float(matchup_row.get("wind_in_score"), 0.0)),
+        "weather_note": weather_reason_label(
+            1.0,
+            hr_weather_mult,
+            safe_float(matchup_row.get("wind_out_score"), 0.0),
+            safe_float(matchup_row.get("wind_in_score"), 0.0),
+        ),
     }
-
-
-def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
-    if hr_wx >= 1.08 or wind_out >= 0.60:
-        return "Great hitting weather"
-    if hr_wx <= 0.94 or wind_in >= 0.60:
-        return "Tough hitting weather"
-    if hr_wx >= 1.03:
-        return "Helpful weather"
-    return "Neutral weather"
 
 
 # =========================================================
@@ -976,8 +1019,8 @@ filtered_hr = filtered_hr.sort_values(["HR Probability Value", "Batter Power"], 
 # TOP DATA
 # =========================================================
 top_pick = filtered_hr.iloc[0] if not filtered_hr.empty else hr_df.iloc[0]
-best_total_game = None
 games_view = pd.DataFrame()
+
 if games:
     game_projection_rows = []
     for game in games:
@@ -986,7 +1029,12 @@ if games:
             {
                 "Matchup": f'{game["away_team"]} @ {game["home_team"]}',
                 "Park": game["park"],
-                "Weather": weather_reason_label(1.0, safe_float(wx.get("hr_mult"), 1.0), safe_float(wx.get("wind_out_score"), 0.0), safe_float(wx.get("wind_in_score"), 0.0)),
+                "Weather": weather_reason_label(
+                    1.0,
+                    safe_float(wx.get("hr_mult"), 1.0),
+                    safe_float(wx.get("wind_out_score"), 0.0),
+                    safe_float(wx.get("wind_in_score"), 0.0),
+                ),
                 "Temp": round(safe_float(wx.get("temp_f"), 70), 1),
                 "Wind": f'{round(safe_float(wx.get("wind_mph"), 8),1)} {wx.get("wind_dir_16","")}',
                 "HR Weather Mult": round(safe_float(wx.get("hr_mult"), 1.0), 3),
@@ -1093,4 +1141,3 @@ with tab4:
         st.write("Skipped:")
         for item in skipped:
             st.write(item)
-          
