@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="CJ HR AI Board", layout="wide")
 st.title("🔥 CJ HR AI Board")
 
-# ---------- FIX (THIS WAS MISSING) ----------
+# ================= FIX =================
 def scale01(x, low, high):
     try:
         x = float(x)
@@ -17,7 +17,7 @@ def scale01(x, low, high):
         return 0.5
     return max(0, min(1, (x - low) / (high - low)))
 
-# ---------- HELPERS ----------
+# ================= HELPERS =================
 def safe_float(x, d=0.0):
     try:
         if pd.isna(x): return d
@@ -52,9 +52,11 @@ def find_col(df, names):
 def build_name(df):
     c = find_col(df, ["player_name", "name"])
     if c: return df[c].astype(str)
+
     c = find_col(df, ["last_name, first_name"])
     if c: return df[c].astype(str).apply(first_last)
-    st.error(f"Missing player name column: {list(df.columns)}")
+
+    st.error(f"❌ Missing player name column. Columns: {list(df.columns)}")
     st.stop()
 
 def pct(x, d):
@@ -69,13 +71,17 @@ def fair_odds(p):
 def player_match(a, b):
     a = norm(first_last(a))
     b = norm(first_last(b))
-    return a == b or (a.split()[-1] == b.split()[-1] if len(a.split())>1 else False)
+    if a == b:
+        return True
+    if len(a.split()) > 1 and len(b.split()) > 1:
+        return a.split()[-1] == b.split()[-1]
+    return False
 
 def find_player(df, name):
     r = df[df["_player_name"].apply(lambda x: player_match(x, name))]
     return r.iloc[0] if not r.empty else None
 
-# ---------- LOAD DATA ----------
+# ================= LOAD DATA =================
 batters = pd.read_csv("batters.csv")
 pitchers = pd.read_csv("pitchers.csv")
 parks = pd.read_csv("parks.csv")
@@ -94,13 +100,15 @@ p_hr9 = find_col(pitchers, ["hr_per_9","hr9"])
 
 park_col = find_col(parks, ["park_name","venue"])
 park_hr = find_col(parks, ["hr_factor"])
+
 parks["_park"] = parks[park_col].astype(str).str.lower()
 
-# ---------- API ----------
-def schedule():
+# ================= MLB API =================
+def get_schedule():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher"
     data = requests.get(url).json()
+
     games=[]
     for d in data.get("dates",[]):
         for g in d.get("games",[]):
@@ -113,9 +121,9 @@ def schedule():
             })
     return games
 
-games = schedule()
+games = get_schedule()
 
-# ---------- MODEL ----------
+# ================= MODEL =================
 def park_factor(park):
     r = parks[parks["_park"] == str(park).lower()]
     if r.empty: return 1
@@ -139,22 +147,34 @@ def pitcher_vuln(p):
 rows=[]
 
 for g in games:
-    if g["home_p"]:
-        for _,b in batters.iterrows():
-            bp = hitter_power(b)
-            pv = pitcher_vuln(find_player(pitchers,g["home_p"]) or pitchers.iloc[0])
-            pf = park_factor(g["park"])
+    if not g["home_p"]:
+        continue
 
-            prob = clamp(.08 + (.38*bp + .27*pv + .20*pf)*.18,.02,.30)
+    p_row = find_player(pitchers, g["home_p"])
+    if p_row is None:
+        continue
 
-            rows.append({
-                "Batter": b["_player_name"],
-                "Matchup": f'{g["away"]} @ {g["home"]}',
-                "HR%": round(prob*100,1),
-                "Odds": fair_odds(prob)
-            })
+    for _, b in batters.iterrows():
+        bp = hitter_power(b)
+        pv = pitcher_vuln(p_row)
+        pf = park_factor(g["park"])
 
-hr_df = pd.DataFrame(rows).sort_values("HR%",ascending=False)
+        prob = clamp(.08 + (.38*bp + .27*pv + .20*pf)*.18,.02,.30)
 
-# ---------- DISPLAY ----------
-st.dataframe(hr_df.head(50), use_container_width=True)
+        rows.append({
+            "Batter": b["_player_name"],
+            "Matchup": f'{g["away"]} @ {g["home"]}',
+            "HR%": round(prob*100,1),
+            "Odds": fair_odds(prob)
+        })
+
+# ================= OUTPUT =================
+hr_df = pd.DataFrame(rows)
+
+if hr_df.empty:
+    st.error("❌ No model output. Likely no pitchers matched.")
+    st.stop()
+
+hr_df = hr_df.sort_values("HR%", ascending=False)
+
+st.dataframe(hr_df.head(75), use_container_width=True)
