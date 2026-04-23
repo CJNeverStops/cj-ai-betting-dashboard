@@ -19,17 +19,18 @@ st.markdown(
     """
 <style>
     .main {
-        background-color: #0b1220;
+        background-color: #07101d;
         color: white;
     }
     .block-container {
         padding-top: 1rem;
         padding-bottom: 2rem;
-        max-width: 1550px;
+        max-width: 1600px;
     }
-    h1,h2,h3,h4 {
+    h1, h2, h3, h4 {
         color: #f8fafc;
     }
+
     .metric-card {
         background: linear-gradient(145deg, #111827, #0f172a);
         padding: 18px;
@@ -39,6 +40,42 @@ st.markdown(
         margin-bottom: 12px;
         min-height: 175px;
     }
+
+    .hero-card {
+        background: linear-gradient(135deg, #2b1616, #1a1f2e);
+        border: 1px solid #7c3f1f;
+        border-radius: 22px;
+        padding: 22px;
+        text-align: center;
+        margin-bottom: 18px;
+    }
+
+    .game-card {
+        background: linear-gradient(145deg, #111827, #0b1220);
+        border-radius: 18px;
+        padding: 16px;
+        min-height: 185px;
+        margin-bottom: 14px;
+    }
+
+    .detail-card {
+        background: linear-gradient(145deg, #111827, #0b1220);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px;
+        padding: 14px 18px;
+        margin-bottom: 14px;
+    }
+
+    .detail-bar {
+        background: linear-gradient(90deg, rgba(16,109,64,0.85), rgba(17,94,89,0.65));
+        border: 1px solid rgba(74,222,128,0.25);
+        border-radius: 14px;
+        padding: 12px 14px;
+        color: #d1fae5;
+        font-weight: 700;
+        margin: 14px 0;
+    }
+
     .pill {
         display: inline-block;
         padding: 6px 12px;
@@ -53,17 +90,85 @@ st.markdown(
     .pill-yellow { background: rgba(234,179,8,.18); color: #fde68a; }
     .pill-blue { background: rgba(59,130,246,.18); color: #bfdbfe; }
     .pill-purple { background: rgba(168,85,247,.18); color: #e9d5ff; }
+    .pill-gray { background: rgba(100,116,139,.18); color: #e2e8f0; }
 
-    div[data-testid="stDataFrame"] {
-        border: 1px solid rgba(255,255,255,0.08);
+    .chip-green, .chip-red, .chip-neutral {
+        display: inline-block;
+        padding: 12px 16px;
         border-radius: 14px;
-        overflow: hidden;
+        margin-bottom: 8px;
+        margin-right: 8px;
+        font-weight: 700;
+        font-size: 14px;
     }
+    .chip-green {
+        background: #052e1a;
+        color: #86efac;
+        border: 1px solid #14532d;
+    }
+    .chip-red {
+        background: #2b0a0a;
+        color: #fca5a5;
+        border: 1px solid #7f1d1d;
+    }
+    .chip-neutral {
+        background: #111827;
+        color: #d1d5db;
+        border: 1px solid #374151;
+    }
+
+    .hr-table-wrap {
+        overflow-x: auto;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px;
+        margin-top: 10px;
+    }
+    .hr-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #0b1220;
+        color: white;
+        font-size: 14px;
+    }
+    .hr-table th {
+        background: #111827;
+        color: white;
+        padding: 10px 12px;
+        border-bottom: 1px solid #1f2937;
+        text-align: left;
+        white-space: nowrap;
+    }
+    .hr-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        white-space: nowrap;
+    }
+    .grade-aplus { background:#166534; color:white; font-weight:700; }
+    .grade-a { background:#15803d; color:white; font-weight:700; }
+    .grade-aminus { background:#16a34a; color:white; font-weight:700; }
+    .grade-bplus { background:#1d4ed8; color:white; font-weight:700; }
+    .grade-b { background:#2563eb; color:white; font-weight:700; }
+    .grade-c { background:#6d28d9; color:white; font-weight:700; }
+
+    .rf-hot { color:#86efac; font-weight:700; }
+    .rf-good { color:#93c5fd; font-weight:700; }
+    .rf-average { color:#fde68a; font-weight:700; }
+    .rf-slump { color:#fca5a5; font-weight:700; }
+
+    .pow-high { background: rgba(34,197,94,0.35); }
+    .pow-mid { background: rgba(34,197,94,0.22); }
+    .pow-low { background: rgba(34,197,94,0.10); }
+
     div[data-testid="stMetric"] {
         background: linear-gradient(145deg, #111827, #0f172a);
         border: 1px solid rgba(255,255,255,0.08);
         padding: 10px;
         border-radius: 16px;
+    }
+    div[data-testid="stDataFrame"] {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px;
+        overflow: hidden;
     }
 </style>
 """,
@@ -71,7 +176,7 @@ st.markdown(
 )
 
 st.title("🔥 CJNeverStops Daily MLB AI Board")
-st.caption("Full MLB board with hitters, HR model, pitchers, projected winners, team totals, weather, and app-style UI")
+st.caption("Full MLB board with hitters, HR model, pitchers, projected winners, team totals, weather, wind, and matchup HR cards")
 
 BATTERS_FILE = "batters.csv"
 PITCHERS_FILE = "pitchers.csv"
@@ -115,14 +220,14 @@ def safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def pct_to_decimal(value, default: Optional[float] = None) -> Optional[float]:
+def pct_to_decimal(value, default: Optional[float] = None) -> float:
     try:
         if pd.isna(value):
-            return default
+            return default if default is not None else 0.0
         v = float(value)
         return v / 100.0 if v > 1 else v
     except Exception:
-        return default
+        return default if default is not None else 0.0
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -175,15 +280,8 @@ def estimate_plate_appearances(lineup_spot) -> float:
     except Exception:
         return 4.2
     pa_map = {
-        1: 4.85,
-        2: 4.75,
-        3: 4.65,
-        4: 4.55,
-        5: 4.45,
-        6: 4.30,
-        7: 4.15,
-        8: 4.00,
-        9: 3.85,
+        1: 4.85, 2: 4.75, 3: 4.65, 4: 4.55, 5: 4.45,
+        6: 4.30, 7: 4.15, 8: 4.00, 9: 3.85,
     }
     return pa_map.get(s, 4.2)
 
@@ -194,15 +292,8 @@ def rbi_lineup_boost(lineup_spot) -> float:
     except Exception:
         return 1.00
     boost_map = {
-        1: 0.86,
-        2: 0.95,
-        3: 1.10,
-        4: 1.16,
-        5: 1.08,
-        6: 1.00,
-        7: 0.93,
-        8: 0.88,
-        9: 0.82,
+        1: 0.86, 2: 0.95, 3: 1.10, 4: 1.16, 5: 1.08,
+        6: 1.00, 7: 0.93, 8: 0.88, 9: 0.82,
     }
     return boost_map.get(s, 1.00)
 
@@ -271,18 +362,18 @@ def render_grade_pill(grade: str):
     if grade == "A-":
         return '<span class="pill pill-green">A-</span>'
     if grade == "B+":
-        return '<span class="pill pill-yellow">B+</span>'
+        return '<span class="pill pill-blue">B+</span>'
     if grade == "B":
-        return '<span class="pill pill-yellow">B</span>'
+        return '<span class="pill pill-blue">B</span>'
     if grade == "C":
-        return '<span class="pill pill-blue">C</span>'
+        return '<span class="pill pill-purple">C</span>'
     if "LOCK" in str(grade):
         return '<span class="pill pill-green">🔥 LOCK</span>'
     if "STRONG" in str(grade):
-        return '<span class="pill pill-green">✅ STRONG</span>'
+        return '<span class="pill pill-blue">✅ STRONG</span>'
     if "LEAN" in str(grade):
         return '<span class="pill pill-yellow">⚠️ LEAN</span>'
-    return '<span class="pill pill-blue">❌ PASS</span>'
+    return '<span class="pill pill-gray">❌ PASS</span>'
 
 
 def render_form_pill(label: str):
@@ -460,14 +551,12 @@ def estimate_weather_multipliers(temp_f, wind_mph, humidity, desc="", wind_dir_d
     }
 
 
-def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
-    if hr_wx >= 1.08 or wind_out >= 0.60:
-        return "Great hitting weather"
-    if hr_wx <= 0.94 or wind_in >= 0.60:
-        return "Tough hitting weather"
-    if hr_wx >= 1.03:
-        return "Helpful weather"
-    return "Neutral weather"
+def weather_bucket(hr_mult: float) -> str:
+    if hr_mult >= 1.03:
+        return "Favorable"
+    if hr_mult <= 0.97:
+        return "Unfavorable"
+    return "Neutral"
 
 
 # =========================================================
@@ -729,6 +818,8 @@ for game in games:
         "hr_weather_mult": wx.get("hr_mult", 1.0),
         "wind_out_score": wx.get("wind_out_score", 0.0),
         "wind_in_score": wx.get("wind_in_score", 0.0),
+        "matchup": f"{away_team} @ {home_team}",
+        "game_time": game.get("game_time", ""),
     }
 
     if home_pitcher:
@@ -744,7 +835,7 @@ for game in games:
                         "batter_hand": hitter.get("batter_hand", ""),
                         "pitcher_hand": "",
                         "lineup_spot": hitter.get("lineup_spot", None),
-                        "lineup_source": "RotoWire",
+                        "lineup_source": "Final" if len(away_lineup) >= 8 else "RotoWire",
                         "game_status": "🟢 Scheduled",
                         **common_weather,
                     }
@@ -763,7 +854,7 @@ for game in games:
                         "batter_hand": "",
                         "pitcher_hand": "",
                         "lineup_spot": None,
-                        "lineup_source": "Team Fallback",
+                        "lineup_source": "Projected",
                         "game_status": "🟢 Scheduled",
                         **common_weather,
                     }
@@ -782,7 +873,7 @@ for game in games:
                         "batter_hand": hitter.get("batter_hand", ""),
                         "pitcher_hand": "",
                         "lineup_spot": hitter.get("lineup_spot", None),
-                        "lineup_source": "RotoWire",
+                        "lineup_source": "Final" if len(home_lineup) >= 8 else "RotoWire",
                         "game_status": "🟢 Scheduled",
                         **common_weather,
                     }
@@ -801,7 +892,7 @@ for game in games:
                         "batter_hand": "",
                         "pitcher_hand": "",
                         "lineup_spot": None,
-                        "lineup_source": "Team Fallback",
+                        "lineup_source": "Projected",
                         "game_status": "🟢 Scheduled",
                         **common_weather,
                     }
@@ -978,7 +1069,7 @@ def calc_batter_board(batter_row, pitcher_row, matchup_row):
 
 
 # =========================================================
-# HR MODEL BOARD
+# HR MODEL
 # =========================================================
 def recent_form_label(score: float) -> str:
     if score >= 0.72:
@@ -1054,12 +1145,7 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "recent_form_score": b["recent_form_score"],
         "recent_form_label": recent_form_label(b["recent_form_score"]),
         "fair_odds": prob_to_fair_american(hr_probability),
-        "weather_note": weather_reason_label(
-            1.0,
-            hr_weather_mult,
-            safe_float(matchup_row.get("wind_out_score"), 0.0),
-            safe_float(matchup_row.get("wind_in_score"), 0.0),
-        ),
+        "weather_note": weather_bucket(hr_weather_mult),
     }
 
 
@@ -1139,7 +1225,7 @@ def prob_over_k_line(expected_ks, line):
 
 
 # =========================================================
-# BUILD BOARDS
+# BUILD ROWS
 # =========================================================
 hitter_rows = []
 hr_rows = []
@@ -1186,10 +1272,8 @@ for _, mrow in matchups.iterrows():
             "Wind MPH": round(safe_float(mrow.get("wind_mph"), 8), 1),
             "Wind Dir": mrow.get("wind_dir_16", ""),
             "Conditions": mrow.get("conditions", ""),
-            "Hit Wx": round(safe_float(mrow.get("run_weather_mult"), 1.0), 3),
-            "HR Wx": round(safe_float(mrow.get("hr_weather_mult"), 1.0), 3),
-            "Wind Out": round(safe_float(mrow.get("wind_out_score"), 0.0), 3),
-            "Wind In": round(safe_float(mrow.get("wind_in_score"), 0.0), 3),
+            "Matchup": mrow.get("matchup", ""),
+            "Game Time": mrow.get("game_time", ""),
         }
     )
 
@@ -1198,6 +1282,8 @@ for _, mrow in matchups.iterrows():
 
     hr_rows.append(
         {
+            "Matchup": mrow.get("matchup", ""),
+            "Game Time": mrow.get("game_time", ""),
             "Batter": mrow["batter"],
             "Batter Team": find_team(mrow["batter"]) or mrow.get("team", ""),
             "Grade": "C",
@@ -1212,7 +1298,7 @@ for _, mrow in matchups.iterrows():
             "Power Match": round(hr_calc["power_match"], 2),
             "Power Match Flames": flame_match(hr_calc["power_match"]),
             "Game Status": mrow.get("game_status", "🟢 Scheduled"),
-            "Lineup": mrow.get("lineup_source", "RotoWire"),
+            "Lineup": mrow.get("lineup_source", "Projected"),
             "Order": int(mrow["lineup_spot"]) if pd.notna(mrow.get("lineup_spot")) else "—",
             "EV": "N/A",
             "HR Odds": "N/A",
@@ -1310,7 +1396,7 @@ if not pitchers_df.empty:
     pitchers_df = pitchers_df.sort_values("Proj Ks", ascending=False).reset_index(drop=True)
 
 # =========================================================
-# GAMES
+# GAME PROJECTIONS
 # =========================================================
 def estimate_team_runs(team_total, weather_boost=1.0, park_hit_factor=1.0, park_hr_factor=1.0):
     base = safe_float(team_total, 4.2)
@@ -1383,12 +1469,8 @@ for game in games:
             "Home Win %": round(home_win_prob * 100, 1),
             "Projected Winner": projected_winner,
             "Park": game["park"],
-            "Weather": weather_reason_label(
-                1.0,
-                safe_float(wx.get("hr_mult"), 1.0),
-                safe_float(wx.get("wind_out_score"), 0.0),
-                safe_float(wx.get("wind_in_score"), 0.0),
-            ),
+            "Weather": weather_bucket(safe_float(wx.get("hr_mult"), 1.0)),
+            "Game Time": game.get("game_time", ""),
         }
     )
 
@@ -1427,46 +1509,103 @@ filtered_batters = filtered_batters.sort_values("Model Score", ascending=False).
 filtered_hr = filtered_hr.sort_values(["HR Probability Value", "Batter Power"], ascending=[False, False]).reset_index(drop=True)
 
 # =========================================================
-# STYLED HR BOARD
+# GAME HR SUMMARY / WEATHER IMPACT
 # =========================================================
-def color_grade(val):
-    if val == "A+":
-        return "background-color: #166534; color: white; font-weight: bold;"
-    if val == "A":
-        return "background-color: #15803d; color: white; font-weight: bold;"
-    if val == "A-":
-        return "background-color: #16a34a; color: white; font-weight: bold;"
-    if val == "B+":
-        return "background-color: #ca8a04; color: white; font-weight: bold;"
-    if val == "B":
-        return "background-color: #a16207; color: white; font-weight: bold;"
-    return "background-color: #334155; color: white;"
-
-
-def color_recent_form(val):
-    if val == "Hot":
-        return "background-color: #166534; color: white;"
-    if val == "Good":
-        return "background-color: #1d4ed8; color: white;"
-    if val == "Average":
-        return "background-color: #a16207; color: white;"
-    return "background-color: #991b1b; color: white;"
-
-
-def hr_board_styler(df: pd.DataFrame):
-    styler = (
-        df.style
-        .map(color_grade, subset=["Grade"])
-        .map(color_recent_form, subset=["Recent Form"])
-        .background_gradient(cmap="Greens", subset=["Batter Power", "Pitcher Vulnerability", "Context Score", "Power Match"])
-        .set_properties(**{"background-color": "#0f172a", "color": "white", "border-color": "#1f2937"})
-        .set_table_styles([
-            {"selector": "th", "props": [("background-color", "#111827"), ("color", "white"), ("border", "1px solid #1f2937")]},
-            {"selector": "td", "props": [("border", "1px solid #1f2937")]},
-        ])
+game_hr_summary = (
+    hr_df.groupby(["Matchup", "Park"], as_index=False)
+    .agg(
+        Expected_HRs=("HR Probability Value", lambda s: round(s.sum() / 100.0, 1)),
+        Top_HR_Pct=("HR Probability Value", lambda s: round(s.max(), 1)),
+        Avg_HR_Pct=("HR Probability Value", lambda s: round(s.mean(), 1)),
+        Players=("Batter", "count"),
     )
-    return styler
+    .sort_values("Expected_HRs", ascending=False)
+    .reset_index(drop=True)
+)
 
+weather_rows = []
+for game in games:
+    wx = weather_map.get(game["gamePk"], {})
+    hr_mult = safe_float(wx.get("hr_mult"), 1.0)
+    wind = safe_float(wx.get("wind_mph"), 0.0)
+    matchup = f"{game['away_team']} @ {game['home_team']}"
+    impact = weather_bucket(hr_mult)
+    pct = round((hr_mult - 1.0) * 100, 1)
+
+    weather_rows.append(
+        {
+            "Matchup": matchup,
+            "Impact": impact,
+            "Pct": pct,
+            "Wind": wind,
+            "WindDir": wx.get("wind_dir_16", ""),
+            "Condition": wx.get("desc", ""),
+            "Temp": wx.get("temp_f", 70),
+        }
+    )
+
+weather_impact_df = pd.DataFrame(weather_rows)
+
+# =========================================================
+# HTML HR TABLE
+# =========================================================
+def value_bg_class(v: float) -> str:
+    if v >= 0.80:
+        return "pow-high"
+    if v >= 0.55:
+        return "pow-mid"
+    return "pow-low"
+
+
+def grade_class(g: str) -> str:
+    return {
+        "A+": "grade-aplus",
+        "A": "grade-a",
+        "A-": "grade-aminus",
+        "B+": "grade-bplus",
+        "B": "grade-b",
+        "C": "grade-c",
+    }.get(g, "grade-c")
+
+
+def form_class(f: str) -> str:
+    return {
+        "Hot": "rf-hot",
+        "Good": "rf-good",
+        "Average": "rf-average",
+        "Slump": "rf-slump",
+    }.get(f, "rf-average")
+
+
+def build_hr_html_table(df: pd.DataFrame) -> str:
+    show_cols = [
+        "Batter", "Batter Team", "Grade", "HR Probability", "Recent Form",
+        "Pitcher", "Pitcher Team", "Batter Power", "Pitcher Vulnerability",
+        "Context Score", "Power Match", "Lineup", "Order", "EV", "HR Odds"
+    ]
+
+    html = ['<div class="hr-table-wrap"><table class="hr-table"><thead><tr>']
+    for col in show_cols:
+        html.append(f"<th>{col}</th>")
+    html.append("</tr></thead><tbody>")
+
+    for _, row in df.iterrows():
+        html.append("<tr>")
+        for col in show_cols:
+            val = row[col]
+
+            if col == "Grade":
+                html.append(f'<td class="{grade_class(str(val))}">{val}</td>')
+            elif col == "Recent Form":
+                html.append(f'<td class="{form_class(str(val))}">● {val}</td>')
+            elif col in ["Batter Power", "Pitcher Vulnerability", "Context Score", "Power Match"]:
+                html.append(f'<td class="{value_bg_class(float(val))}">{val}</td>')
+            else:
+                html.append(f"<td>{val}</td>")
+        html.append("</tr>")
+
+    html.append("</tbody></table></div>")
+    return "".join(html)
 
 # =========================================================
 # TOP DATA
@@ -1482,6 +1621,10 @@ if not game_proj_df.empty:
     strongest_favorite = game_proj_df.iloc[
         game_proj_df[["Away Win %", "Home Win %"]].max(axis=1).idxmax()
     ]
+
+total_projected_hrs = round(game_hr_summary["Expected_HRs"].sum(), 1) if not game_hr_summary.empty else 0.0
+game_count = len(game_hr_summary)
+avg_per_game = round(total_projected_hrs / game_count, 1) if game_count else 0.0
 
 # =========================================================
 # TABS
@@ -1520,61 +1663,149 @@ with tab1:
             f'{round(max(strongest_favorite["Away Win %"], strongest_favorite["Home Win %"]), 1)}% win chance',
         )
 
-    st.subheader("🔥 Top Plays")
-    cards = filtered_best.head(3)
-    cols = st.columns(3)
-    for i, (_, row) in enumerate(cards.iterrows()):
-        with cols[i]:
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <h3>{row['Player']}</h3>
-                    {render_grade_pill(row['Grade'])}
-                    <p><strong>Best Prop:</strong> {row['Best Prop']}</p>
-                    <p><strong>Best Prop %:</strong> {row['Best Prop %']}</p>
-                    <p><strong>Fair Odds:</strong> {row['Fair Odds']}</p>
-                    <p><strong>Model Score:</strong> {row['Model Score']}</p>
-                    <p><strong>Why:</strong> {row['Why']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.markdown(
+        f"""
+        <div class="hero-card">
+            <div style="font-size: 20px;">🔥 🔥 🔥</div>
+            <div style="font-size: 28px; font-weight: 800; color: #fb923c;">
+                {total_projected_hrs} Total Projected HRs
+            </div>
+            <div style="font-size: 16px; color: #d1d5db;">
+                Across {game_count} games • {avg_per_game} avg per game
+            </div>
+            <div style="font-size: 14px; color: #9ca3af; margin-top: 6px;">
+                Based on comprehensive player matchup analysis
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("💣 Top HR Cards")
-    hr_cards = filtered_hr.head(3)
-    cols = st.columns(3)
-    for i, (_, row) in enumerate(hr_cards.iterrows()):
-        with cols[i]:
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <h3>{row['Batter']}</h3>
-                    {render_grade_pill(row['Grade'])}
-                    {render_form_pill(row['Recent Form'])}
-                    <p><strong>HR Probability:</strong> {row['HR Probability']}</p>
-                    <p><strong>Pitcher:</strong> {row['Pitcher']}</p>
-                    <p><strong>Batter Power:</strong> {row['Batter Power']}</p>
-                    <p><strong>Pitcher Vulnerability:</strong> {row['Pitcher Vulnerability']}</p>
-                    <p><strong>Context Score:</strong> {row['Context Score']}</p>
-                    <p><strong>Power Match:</strong> {row['Power Match Flames']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.subheader("💣 Expected HRs By Game")
+    if not game_hr_summary.empty:
+        for start in range(0, min(len(game_hr_summary), 12), 4):
+            cols = st.columns(4)
+            chunk = game_hr_summary.iloc[start:start+4]
+            for i, (_, row) in enumerate(chunk.iterrows()):
+                expected_hr = row["Expected_HRs"]
+                if expected_hr >= 2.3:
+                    border_color = "#f97316"
+                    txt_color = "#fb923c"
+                elif expected_hr >= 2.0:
+                    border_color = "#22c55e"
+                    txt_color = "#4ade80"
+                else:
+                    border_color = "#6b7280"
+                    txt_color = "#d1d5db"
+
+                with cols[i]:
+                    st.markdown(
+                        f"""
+                        <div class="game-card" style="border:1px solid {border_color}; border-left:5px solid {border_color};">
+                            <div style="font-weight:700; color:#f8fafc; margin-bottom:8px;">⚡ {row['Matchup']}</div>
+                            <div style="font-size:28px; font-weight:800; color:{txt_color};">{row['Expected_HRs']} Expected HRs</div>
+                            <div style="margin-top:10px; color:#d1d5db;">
+                                Top: {row['Top_HR_Pct']}%
+                                <span style="float:right;">Avg: {row['Avg_HR_Pct']}%</span>
+                            </div>
+                            <div style="margin-top:12px; color:#9ca3af; font-size:14px;">{row['Players']} projected players</div>
+                            <div style="margin-top:8px; color:#6b7280; font-size:13px;">{row['Park']}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+    st.subheader("🌤️ Weather Impact on Home Runs")
+
+    fav = weather_impact_df[weather_impact_df["Impact"] == "Favorable"]
+    bad = weather_impact_df[weather_impact_df["Impact"] == "Unfavorable"]
+    neu = weather_impact_df[weather_impact_df["Impact"] == "Neutral"]
+
+    st.markdown("### 🟢 HR Favorable Games")
+    if fav.empty:
+        st.write("None")
+    else:
+        html = ""
+        for _, r in fav.iterrows():
+            html += f'<span class="chip-green">● {r["Matchup"]} {r["Pct"]:+.1f}% {r["Wind"]}mph {r["WindDir"]}</span>'
+        st.markdown(html, unsafe_allow_html=True)
+
+    st.markdown("### 🔴 HR Unfavorable Games")
+    if bad.empty:
+        st.write("None")
+    else:
+        html = ""
+        for _, r in bad.iterrows():
+            html += f'<span class="chip-red">● {r["Matchup"]} {r["Pct"]:+.1f}% {r["Wind"]}mph {r["WindDir"]}</span>'
+        st.markdown(html, unsafe_allow_html=True)
+
+    st.markdown("### ⚪ Neutral Impact Games")
+    if neu.empty:
+        st.write("None")
+    else:
+        html = ""
+        for _, r in neu.iterrows():
+            html += f'<span class="chip-neutral">● {r["Matchup"]} neutral</span>'
+        st.markdown(html, unsafe_allow_html=True)
 
 # =========================================================
 # HR BOARD
 # =========================================================
 with tab2:
     st.subheader("💣 MLB Home Run A.I. Board")
-    hr_board_cols = [
-        "Batter", "Batter Team", "Grade", "HR Probability", "Recent Form",
-        "Pitcher", "Pitcher Team", "Batter Power", "Pitcher Vulnerability",
-        "Context Score", "Power Match", "Power Match Flames", "Game Status",
-        "Lineup", "Order", "EV", "HR Odds"
-    ]
-    styled = hr_board_styler(filtered_hr[hr_board_cols].head(50))
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    matchup_options = sorted(filtered_hr["Matchup"].dropna().unique().tolist())
+    selected_matchup = st.selectbox("Select matchup", matchup_options) if matchup_options else None
+
+    if selected_matchup:
+        selected_game_df = filtered_hr[filtered_hr["Matchup"] == selected_matchup].copy()
+        selected_game_df = selected_game_df.sort_values("HR Probability Value", ascending=False)
+
+        game_meta = game_proj_df[game_proj_df["Matchup"] == selected_matchup]
+        if not game_meta.empty:
+            gm = game_meta.iloc[0]
+            st.markdown(
+                f"""
+                <div class="detail-card">
+                    <div style="font-size:20px;font-weight:800;color:#f8fafc;">{selected_matchup}</div>
+                    <div style="color:#9ca3af;margin-top:6px;">Projected Winner: {gm['Projected Winner']}</div>
+                    <div style="color:#9ca3af;">Projected Runs: {gm['Away Runs']} - {gm['Home Runs']}</div>
+                    <div style="color:#9ca3af;">Game Time: {gm['Game Time']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        lineup_text = "Final Lineups Available - Using official MLB starting lineups" if (selected_game_df["Lineup"] == "Final").any() else "Projected lineup currently in use"
+        st.markdown(f'<div class="detail-bar">🟢 {lineup_text}</div>', unsafe_allow_html=True)
+
+        st.markdown(build_hr_html_table(selected_game_df.head(20)), unsafe_allow_html=True)
+
+        if not selected_game_df.empty:
+            r = selected_game_df.iloc[0]
+            c1, c2 = st.columns(2)
+
+            with c1:
+                st.markdown("### Game Weather")
+                st.write(f"Condition: {r.get('Weather', 'N/A')}")
+                st.write(f"Temperature: {r.get('Temp', 'N/A')}°F")
+                st.write(f"Park: {r.get('Park', 'N/A')}")
+
+            with c2:
+                st.markdown("### Wind Details")
+                st.write(f"Wind Speed: {r.get('Wind MPH', 'N/A')} mph")
+                st.write(f"Wind Direction: {r.get('Wind Dir', 'N/A')}")
+                st.write(f"Wind Impact: {r.get('Weather', 'N/A')} for home runs")
+
+            st.markdown("### Impact on Home Run Probability")
+            st.write(
+                f"Weather conditions are included in the HR model for {selected_matchup}. "
+                f"The current game environment is marked as {r.get('Weather', 'N/A').lower()} for home runs."
+            )
+
+    st.markdown("---")
+    st.subheader("Full HR Board")
+    st.markdown(build_hr_html_table(filtered_hr.head(60)), unsafe_allow_html=True)
 
 # =========================================================
 # BEST HITTERS
