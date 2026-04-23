@@ -214,7 +214,8 @@ def park_factor(park):
         return 1.0
     v = safe_float(r.iloc[0][park_hr_col], 1.0) if park_hr_col else 1.0
     return v / 100 if v > 3 else v
-def scale01(x, low, high):
+def logistic(x: float) -> float:
+    return 1 / (1 + math.exp(-x))def scale01(x, low, high):
     try:
         x = float(x)
     except:
