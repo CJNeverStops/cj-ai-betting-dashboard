@@ -214,7 +214,14 @@ def park_factor(park):
         return 1.0
     v = safe_float(r.iloc[0][park_hr_col], 1.0) if park_hr_col else 1.0
     return v / 100 if v > 3 else v
-
+def scale01(x, low, high):
+    try:
+        x = float(x)
+    except:
+        x = low
+    if high <= low:
+        return 0.5
+    return max(0, min(1, (x - low) / (high - low)))
 def hitter_power(row):
     xslg = safe_float(row[b_xslg], .390) if b_xslg else .390
     barrel = pct(row[b_barrel], .08) if b_barrel else .08
