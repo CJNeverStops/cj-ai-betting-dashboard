@@ -10,7 +10,7 @@ import streamlit as st
 # APP CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="CJ HR AI Board",
+    page_title="CJ Daily MLB AI Board",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -25,7 +25,7 @@ st.markdown(
     .block-container {
         padding-top: 1rem;
         padding-bottom: 2rem;
-        max-width: 1500px;
+        max-width: 1550px;
     }
     h1,h2,h3,h4 {
         color: #f8fafc;
@@ -37,7 +37,7 @@ st.markdown(
         border: 1px solid rgba(255,255,255,0.08);
         box-shadow: 0 8px 24px rgba(0,0,0,0.25);
         margin-bottom: 12px;
-        min-height: 170px;
+        min-height: 175px;
     }
     .pill {
         display: inline-block;
@@ -59,7 +59,6 @@ st.markdown(
         border-radius: 14px;
         overflow: hidden;
     }
-
     div[data-testid="stMetric"] {
         background: linear-gradient(145deg, #111827, #0f172a);
         border: 1px solid rgba(255,255,255,0.08);
@@ -71,8 +70,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("💣 CJNeverStops MLB Home Run A.I. Board")
-st.caption("HR-focused board with batter power, pitcher vulnerability, context score, power match, weather, and app-style UI")
+st.title("🔥 CJNeverStops Daily MLB AI Board")
+st.caption("Full MLB board with hitters, HR model, pitchers, projected winners, team totals, weather, and app-style UI")
 
 BATTERS_FILE = "batters.csv"
 PITCHERS_FILE = "pitchers.csv"
@@ -189,6 +188,25 @@ def estimate_plate_appearances(lineup_spot) -> float:
     return pa_map.get(s, 4.2)
 
 
+def rbi_lineup_boost(lineup_spot) -> float:
+    try:
+        s = int(float(lineup_spot))
+    except Exception:
+        return 1.00
+    boost_map = {
+        1: 0.86,
+        2: 0.95,
+        3: 1.10,
+        4: 1.16,
+        5: 1.08,
+        6: 1.00,
+        7: 0.93,
+        8: 0.88,
+        9: 0.82,
+    }
+    return boost_map.get(s, 1.00)
+
+
 def platoon_boost(batter_hand, pitcher_hand) -> float:
     bh = str(batter_hand).strip().upper()
     ph = str(pitcher_hand).strip().upper()
@@ -258,7 +276,13 @@ def render_grade_pill(grade: str):
         return '<span class="pill pill-yellow">B</span>'
     if grade == "C":
         return '<span class="pill pill-blue">C</span>'
-    return '<span class="pill pill-purple">N/A</span>'
+    if "LOCK" in str(grade):
+        return '<span class="pill pill-green">🔥 LOCK</span>'
+    if "STRONG" in str(grade):
+        return '<span class="pill pill-green">✅ STRONG</span>'
+    if "LEAN" in str(grade):
+        return '<span class="pill pill-yellow">⚠️ LEAN</span>'
+    return '<span class="pill pill-blue">❌ PASS</span>'
 
 
 def render_form_pill(label: str):
@@ -269,6 +293,29 @@ def render_form_pill(label: str):
     if "Average" in label:
         return '<span class="pill pill-yellow">🟡 Average</span>'
     return '<span class="pill pill-red">🔴 Slump</span>'
+
+
+def apply_relative_grades(df: pd.DataFrame, score_col: str, out_col: str) -> pd.DataFrame:
+    df = df.copy()
+    if len(df) < 4:
+        df[out_col] = "✅ STRONG"
+        return df
+
+    q90 = df[score_col].quantile(0.90)
+    q65 = df[score_col].quantile(0.65)
+    q35 = df[score_col].quantile(0.35)
+
+    def _grade(x):
+        if x >= q90:
+            return "🔥 LOCK"
+        if x >= q65:
+            return "✅ STRONG"
+        if x >= q35:
+            return "⚠️ LEAN"
+        return "❌ PASS"
+
+    df[out_col] = df[score_col].apply(_grade)
+    return df
 
 
 # =========================================================
@@ -413,6 +460,16 @@ def estimate_weather_multipliers(temp_f, wind_mph, humidity, desc="", wind_dir_d
     }
 
 
+def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
+    if hr_wx >= 1.08 or wind_out >= 0.60:
+        return "Great hitting weather"
+    if hr_wx <= 0.94 or wind_in >= 0.60:
+        return "Tough hitting weather"
+    if hr_wx >= 1.03:
+        return "Helpful weather"
+    return "Neutral weather"
+
+
 # =========================================================
 # MLB API
 # =========================================================
@@ -542,6 +599,7 @@ b_xwoba = find_col(batters, ["xwoba", "est_woba"])
 b_barrel = find_col(batters, ["brl_percent", "barrel_batted_rate", "barrel_pct", "barrel"])
 b_hardhit = find_col(batters, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
 b_k = find_col(batters, ["k_percent", "strikeout_percent", "k%"])
+b_bb = find_col(batters, ["bb_percent", "walk_percent", "bb%"])
 b_fb = find_col(batters, ["fb_percent", "fly_ball_percent", "flyball", "fly_ball"])
 b_pa = find_col(batters, ["pa", "plate_appearances"])
 
@@ -552,6 +610,7 @@ p_xwoba = find_col(pitchers, ["xwoba", "est_woba"])
 p_barrel = find_col(pitchers, ["brl_percent", "barrel_batted_rate", "barrel_pct", "barrel"])
 p_hardhit = find_col(pitchers, ["hard_hit_percent", "hard_hit_pct", "hardhit"])
 p_k = find_col(pitchers, ["k_percent", "strikeout_percent", "k%"])
+p_bb = find_col(pitchers, ["bb_percent", "walk_percent", "bb%"])
 p_hr9 = find_col(pitchers, ["hr_per_9", "hr9", "hr/9"])
 
 park_name_col = require_col(parks, ["park_name", "venue_name", "park", "venue"], "park name")
@@ -582,8 +641,8 @@ batters["_team_norm"] = batters["_team_auto"].map(norm_text)
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.title("💣 CJ HR Board")
-    st.caption("Home run leaderboard")
+    st.title("⚾ CJ AI Board")
+    st.caption("Daily MLB model")
 
     show_unconfirmed = st.toggle("Show fallback hitters when lineups aren't posted", value=True)
 
@@ -593,9 +652,12 @@ with st.sidebar:
         index=0,
     )
 
+    st.divider()
+    st.subheader("Filters")
     min_hr_prob = st.slider("Minimum HR %", 0.0, 40.0, 10.0, 0.5)
-    min_grade = st.selectbox("Minimum Grade", ["All", "A+", "A", "A-", "B+", "B", "C"])
-    search_name = st.text_input("Search Batter")
+    min_model_score = st.slider("Minimum Hitter Model Score", 0.0, 100.0, 0.0, 0.5)
+    min_grade = st.selectbox("Minimum HR Grade", ["All", "A+", "A", "A-", "B+", "B", "C"])
+    search_name = st.text_input("Search Player")
 
 if team_col_pick == "_team_auto":
     batters["_team_norm"] = batters["_team_auto"].map(norm_text)
@@ -755,7 +817,7 @@ matchups["_pitcher"] = matchups["pitcher"].astype(str).map(norm_text)
 matchups["_park"] = matchups["park"].astype(str).str.strip().str.lower()
 
 # =========================================================
-# METRIC EXTRACTORS
+# METRICS
 # =========================================================
 def get_batter_metrics(row):
     pa_val = safe_float(row[b_pa], 250.0) if b_pa else 250.0
@@ -768,6 +830,7 @@ def get_batter_metrics(row):
     xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
     xwoba = safe_float(row[b_xwoba], 0.310) if b_xwoba else 0.310
     k_rate = pct_to_decimal(row[b_k], 0.22) if b_k else 0.22
+    bb_rate = pct_to_decimal(row[b_bb], 0.08) if b_bb else 0.08
 
     recent_form_score = clamp(
         (
@@ -788,6 +851,7 @@ def get_batter_metrics(row):
         "hardhit": hardhit,
         "fb": fb,
         "k_rate": k_rate,
+        "bb_rate": bb_rate,
         "recent_form_score": recent_form_score,
     }
 
@@ -800,6 +864,7 @@ def get_pitcher_metrics(row):
         "barrel": pct_to_decimal(row[p_barrel], 0.08) if p_barrel else 0.08,
         "hardhit": pct_to_decimal(row[p_hardhit], 0.38) if p_hardhit else 0.38,
         "k_rate": pct_to_decimal(row[p_k], 0.22) if p_k else 0.22,
+        "bb_rate": pct_to_decimal(row[p_bb], 0.08) if p_bb else 0.08,
         "hr9": safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05,
     }
 
@@ -816,14 +881,108 @@ def get_park_factors(park_key):
     hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
     hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
 
+    return {"hr_factor": hr_factor, "hit_factor": hit_factor}
+
+
+# =========================================================
+# MAIN HITTER MODEL
+# =========================================================
+def calc_batter_board(
+    batter_row,
+    pitcher_row,
+    matchup_row,
+):
+    b = get_batter_metrics(batter_row)
+    p = get_pitcher_metrics(pitcher_row)
+    park = get_park_factors(matchup_row["_park"])
+
+    platoon = platoon_boost(matchup_row.get("batter_hand", ""), matchup_row.get("pitcher_hand", ""))
+    hit_weather_mult = safe_float(matchup_row.get("run_weather_mult", 1.0), 1.0)
+    hr_weather_mult = safe_float(matchup_row.get("hr_weather_mult", 1.0), 1.0)
+    run_weather_mult = safe_float(matchup_row.get("run_weather_mult", 1.0), 1.0)
+    plate_appearances = estimate_plate_appearances(matchup_row.get("lineup_spot", 5))
+    team_total_mult = clamp(run_weather_mult, 0.88, 1.15)
+
+    hit_score_raw = (
+        1.9 * (b["xba"] - 0.240)
+        + 0.9 * (b["xwoba"] - 0.310)
+        + 0.5 * (b["hardhit"] - 0.38)
+        - 0.9 * (b["k_rate"] - 0.22)
+        - 1.3 * (p["k_rate"] - 0.22)
+        - 1.0 * (p["xba"] - 0.240)
+    )
+    hit_prob_pa = logistic(-1.35 + hit_score_raw) * park["hit_factor"] * platoon * hit_weather_mult
+    hit_prob_pa = clamp(hit_prob_pa, 0.025, 0.55)
+    hit_prob = 1 - (1 - hit_prob_pa) ** plate_appearances
+    hit_prob = clamp(hit_prob, 0.18, 0.88)
+
+    hr_score_raw = (
+        4.2 * (b["xslg"] - 0.390)
+        + 2.6 * (b["barrel"] - 0.08)
+        + 1.2 * (b["hardhit"] - 0.38)
+        + 2.1 * (p["xslg"] - 0.390)
+        + 1.4 * (p["barrel"] - 0.08)
+        + 0.9 * (p["hr9"] - 1.05)
+    )
+    hr_prob_pa = logistic(-3.9 + hr_score_raw)
+    hr_prob = 1 - (1 - hr_prob_pa) ** plate_appearances
+    hr_prob *= park["hr_factor"]
+    hr_prob *= hr_weather_mult
+    hr_prob *= platoon
+    hr_prob = clamp(hr_prob, 0.01, 0.28)
+
+    tb_score_raw = (
+        2.6 * (b["xslg"] - 0.390)
+        + 1.2 * (b["xba"] - 0.240)
+        + 1.1 * (b["hardhit"] - 0.38)
+        + 0.8 * (b["barrel"] - 0.08)
+        + 1.4 * (p["xslg"] - 0.390)
+        + 0.5 * (p["xba"] - 0.240)
+    )
+    tb_prob_pa = logistic(-2.2 + tb_score_raw)
+    tb_prob_pa = clamp(tb_prob_pa, 0.02, 0.40)
+    tb_prob = 1 - (1 - tb_prob_pa) ** (plate_appearances * 0.92)
+    tb_prob *= park["hit_factor"] * hit_weather_mult
+    tb_prob *= (park["hr_factor"] ** 0.20)
+    tb_prob *= platoon
+    tb_prob = clamp(tb_prob, 0.10, 0.72)
+
+    rbi_score_raw = (
+        1.9 * (b["xwoba"] - 0.310)
+        + 1.8 * (b["xslg"] - 0.390)
+        + 0.8 * (b["hardhit"] - 0.38)
+        + 0.8 * (p["xwoba"] - 0.310)
+    )
+    rbi_prob_pa = logistic(-2.55 + rbi_score_raw)
+    rbi_prob_pa = clamp(rbi_prob_pa, 0.015, 0.28)
+    rbi_prob = 1 - (1 - rbi_prob_pa) ** (plate_appearances * 0.95)
+    rbi_prob *= park["hit_factor"] * hit_weather_mult
+    rbi_prob *= team_total_mult
+    rbi_prob *= platoon
+    rbi_prob *= rbi_lineup_boost(matchup_row.get("lineup_spot", 5))
+    rbi_prob = clamp(rbi_prob, 0.06, 0.58)
+
+    weighted_score = (
+        hit_prob * 0.40
+        + tb_prob * 0.30
+        + rbi_prob * 0.20
+        + hr_prob * 0.10
+    ) * 100
+
     return {
-        "hr_factor": hr_factor,
-        "hit_factor": hit_factor,
+        "hit_prob": hit_prob,
+        "hr_prob": hr_prob,
+        "tb_prob": tb_prob,
+        "rbi_prob": rbi_prob,
+        "platoon": platoon,
+        "hr_factor": park["hr_factor"],
+        "hit_factor": park["hit_factor"],
+        "weighted_score": weighted_score,
     }
 
 
 # =========================================================
-# HR MODEL COMPONENTS
+# HR MODEL BOARD
 # =========================================================
 def recent_form_label(score: float) -> str:
     if score >= 0.75:
@@ -859,23 +1018,12 @@ def flame_match(value: float) -> str:
     return "—"
 
 
-def weather_reason_label(hit_wx: float, hr_wx: float, wind_out: float, wind_in: float):
-    if hr_wx >= 1.08 or wind_out >= 0.60:
-        return "Great hitting weather"
-    if hr_wx <= 0.94 or wind_in >= 0.60:
-        return "Tough hitting weather"
-    if hr_wx >= 1.03:
-        return "Helpful weather"
-    return "Neutral weather"
-
-
 def calc_hr_model(batter_row, pitcher_row, matchup_row):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
     park = get_park_factors(matchup_row["_park"])
 
-    lineup_spot = matchup_row.get("lineup_spot", None)
-    lineup_value = estimate_plate_appearances(lineup_spot)
+    lineup_value = estimate_plate_appearances(matchup_row.get("lineup_spot", None))
     platoon_mult = platoon_boost(matchup_row.get("batter_hand", ""), matchup_row.get("pitcher_hand", ""))
     hr_weather_mult = safe_float(matchup_row.get("hr_weather_mult", 1.0), 1.0)
 
@@ -935,8 +1083,56 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
 
 
 # =========================================================
-# BUILD HR BOARD
+# PITCHER K MODEL
 # =========================================================
+def project_pitcher_ks(pitcher_row, opp_batters):
+    p = get_pitcher_metrics(pitcher_row)
+
+    if opp_batters:
+        avg_opp_k = sum(x["k_rate"] for x in opp_batters) / len(opp_batters)
+        avg_opp_bb = sum(x["bb_rate"] for x in opp_batters) / len(opp_batters)
+        avg_opp_xwoba = sum(x["xwoba"] for x in opp_batters) / len(opp_batters)
+    else:
+        avg_opp_k = 0.22
+        avg_opp_bb = 0.08
+        avg_opp_xwoba = 0.310
+
+    effective_k_rate = (
+        0.60 * p["k_rate"]
+        + 0.40 * avg_opp_k
+        - 0.16 * (avg_opp_bb - 0.08)
+        - 0.10 * (avg_opp_xwoba - 0.310)
+        - 0.10 * (p["bb_rate"] - 0.08)
+        - 0.08 * (p["xwoba"] - 0.310)
+    )
+    effective_k_rate = clamp(effective_k_rate, 0.14, 0.38)
+
+    lineup_size = len(opp_batters)
+    batters_faced = (
+        24.0
+        + 5.2 * (p["k_rate"] - 0.22)
+        - 3.0 * (p["bb_rate"] - 0.08)
+        - 1.6 * (avg_opp_xwoba - 0.310)
+    )
+    if lineup_size >= 9:
+        batters_faced += 0.7
+    elif lineup_size <= 6:
+        batters_faced -= 1.0
+
+    batters_faced = clamp(batters_faced, 20.5, 28.0)
+    return effective_k_rate * batters_faced
+
+
+def prob_over_k_line(expected_ks, line):
+    std_dev = 1.7 + 0.05 * max(0.0, 6.0 - expected_ks)
+    z = (expected_ks - line) / std_dev
+    return 1 / (1 + math.exp(-1.7 * z))
+
+
+# =========================================================
+# BUILD MAIN HITTER BOARD
+# =========================================================
+hitter_rows = []
 hr_rows = []
 skipped = []
 
@@ -954,27 +1150,58 @@ for _, mrow in matchups.iterrows():
     batter_row = batter_match.iloc[0]
     pitcher_row = pitcher_match.iloc[0]
 
-    calc = calc_hr_model(batter_row, pitcher_row, mrow)
+    hit_calc = calc_batter_board(batter_row, pitcher_row, mrow)
+    hr_calc = calc_hr_model(batter_row, pitcher_row, mrow)
 
-    prob = calc["hr_probability"]
-    fair = calc["fair_odds"]
+    hitter_rows.append(
+        {
+            "Batter": mrow["batter"],
+            "Pitcher": mrow["pitcher"],
+            "Team": mrow.get("team", ""),
+            "Opp": mrow.get("pitcher_team", ""),
+            "Park": mrow["park"],
+            "Lineup": int(mrow["lineup_spot"]) if pd.notna(mrow.get("lineup_spot")) else "—",
+            "Hit %": round(hit_calc["hit_prob"] * 100, 1),
+            "HR %": round(hit_calc["hr_prob"] * 100, 1),
+            "TB %": round(hit_calc["tb_prob"] * 100, 1),
+            "RBI %": round(hit_calc["rbi_prob"] * 100, 1),
+            "Hit Fair Odds": prob_to_fair_american(hit_calc["hit_prob"]),
+            "HR Fair Odds": prob_to_fair_american(hit_calc["hr_prob"]),
+            "TB Fair Odds": prob_to_fair_american(hit_calc["tb_prob"]),
+            "RBI Fair Odds": prob_to_fair_american(hit_calc["rbi_prob"]),
+            "Model Score": round(hit_calc["weighted_score"], 1),
+            "Platoon": round(hit_calc["platoon"], 2),
+            "HR Park": round(hit_calc["hr_factor"], 2),
+            "Why": f'{hr_calc["weather_note"]} | Power {hr_calc["batter_power"]:.2f} | Vuln {hr_calc["pitcher_vulnerability"]:.2f} | Ctx {hr_calc["context_score"]:.2f}',
+            "Temp": round(safe_float(mrow.get("temp_f"), 70), 1),
+            "Wind MPH": round(safe_float(mrow.get("wind_mph"), 8), 1),
+            "Wind Dir": mrow.get("wind_dir_16", ""),
+            "Conditions": mrow.get("conditions", ""),
+            "Hit Wx": round(safe_float(mrow.get("run_weather_mult"), 1.0), 3),
+            "HR Wx": round(safe_float(mrow.get("hr_weather_mult"), 1.0), 3),
+            "Wind Out": round(safe_float(mrow.get("wind_out_score"), 0.0), 3),
+            "Wind In": round(safe_float(mrow.get("wind_in_score"), 0.0), 3),
+        }
+    )
+
+    fair = hr_calc["fair_odds"]
     fair_str = f"{fair:+d}" if fair is not None else "N/A"
 
     hr_rows.append(
         {
             "Batter": mrow["batter"],
             "Batter Team": find_team(mrow["batter"]) or mrow.get("team", ""),
-            "Grade": calc["grade"],
-            "HR Probability Value": round(prob * 100, 1),
-            "HR Probability": f'{prob * 100:.1f}% ({fair_str})',
-            "Recent Form": calc["recent_form_label"],
+            "Grade": hr_calc["grade"],
+            "HR Probability Value": round(hr_calc["hr_probability"] * 100, 1),
+            "HR Probability": f'{hr_calc["hr_probability"] * 100:.1f}% ({fair_str})',
+            "Recent Form": hr_calc["recent_form_label"],
             "Pitcher": mrow["pitcher"],
             "Pitcher Team": mrow.get("pitcher_team", ""),
-            "Batter Power": round(calc["batter_power"], 2),
-            "Pitcher Vulnerability": round(calc["pitcher_vulnerability"], 2),
-            "Context Score": round(calc["context_score"], 2),
-            "Power Match": round(calc["power_match"], 2),
-            "Power Match Flames": flame_match(calc["power_match"]),
+            "Batter Power": round(hr_calc["batter_power"], 2),
+            "Pitcher Vulnerability": round(hr_calc["pitcher_vulnerability"], 2),
+            "Context Score": round(hr_calc["context_score"], 2),
+            "Power Match": round(hr_calc["power_match"], 2),
+            "Power Match Flames": flame_match(hr_calc["power_match"]),
             "Game Status": mrow.get("game_status", "🟢 Scheduled"),
             "Lineup": mrow.get("lineup_source", "RotoWire"),
             "Order": int(mrow["lineup_spot"]) if pd.notna(mrow.get("lineup_spot")) else "—",
@@ -982,24 +1209,190 @@ for _, mrow in matchups.iterrows():
             "HR Odds": "N/A",
             "Fair Odds": fair,
             "Park": mrow["park"],
-            "Weather": calc["weather_note"],
+            "Weather": hr_calc["weather_note"],
             "Temp": round(safe_float(mrow.get("temp_f"), 70), 1),
             "Wind MPH": round(safe_float(mrow.get("wind_mph"), 8), 1),
             "Wind Dir": mrow.get("wind_dir_16", ""),
-            "Why": f'{calc["weather_note"]} | Power {calc["batter_power"]:.2f} | Vuln {calc["pitcher_vulnerability"]:.2f} | Ctx {calc["context_score"]:.2f}',
+            "Why": f'{hr_calc["weather_note"]} | Power {hr_calc["batter_power"]:.2f} | Vuln {hr_calc["pitcher_vulnerability"]:.2f} | Ctx {hr_calc["context_score"]:.2f}',
         }
     )
 
+batters_df = pd.DataFrame(hitter_rows)
 hr_df = pd.DataFrame(hr_rows)
-if hr_df.empty:
-    st.error("No HR rows were built.")
+
+if batters_df.empty or hr_df.empty:
+    st.error("No batter rows were built.")
     if skipped:
         st.write(skipped)
     st.stop()
 
+batters_df = apply_relative_grades(batters_df, "Model Score", "Best Grade")
+
+# =========================================================
+# BUILD BEST PICKS
+# =========================================================
+best_pick_rows = []
+for _, r in batters_df.iterrows():
+    prop_options = [
+        ("Hit", r["Hit %"], r["Hit Fair Odds"]),
+        ("Home Run", r["HR %"], r["HR Fair Odds"]),
+        ("Total Bases", r["TB %"], r["TB Fair Odds"]),
+        ("RBI", r["RBI %"], r["RBI Fair Odds"]),
+    ]
+    best_prop, best_prob, best_fair = sorted(prop_options, key=lambda x: x[1], reverse=True)[0]
+
+    best_pick_rows.append(
+        {
+            "Player": r["Batter"],
+            "Pitcher": r["Pitcher"],
+            "Park": r["Park"],
+            "Best Prop": best_prop,
+            "Best Prop %": best_prob,
+            "Fair Odds": best_fair,
+            "Model Score": r["Model Score"],
+            "Grade": r["Best Grade"],
+            "Why": r["Why"],
+        }
+    )
+
+best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Model Score", ascending=False).reset_index(drop=True)
+
+# =========================================================
+# BUILD PITCHER BOARD
+# =========================================================
+pitcher_rows = []
+
+for pitcher_name, grp in batters_df.groupby("Pitcher"):
+    p_match = find_name_match(pitchers, norm_text(pitcher_name))
+    if p_match.empty:
+        continue
+
+    p_row = p_match.iloc[0]
+    opp_batters = []
+    for _, batter_rec in grp.iterrows():
+        b_match = find_name_match(batters, norm_text(batter_rec["Batter"]))
+        if not b_match.empty:
+            opp_batters.append(get_batter_metrics(b_match.iloc[0]))
+
+    expected_ks = project_pitcher_ks(p_row, opp_batters)
+    prob_45 = prob_over_k_line(expected_ks, 4.5)
+    prob_55 = prob_over_k_line(expected_ks, 5.5)
+    prob_65 = prob_over_k_line(expected_ks, 6.5)
+
+    pitcher_rows.append(
+        {
+            "Pitcher": pitcher_name,
+            "Opponent": grp["Team"].iloc[0] if "Team" in grp.columns else "",
+            "Proj Ks": round(expected_ks, 2),
+            "Over 4.5 %": round(prob_45 * 100, 1),
+            "Over 4.5 Fair": prob_to_fair_american(prob_45),
+            "Over 5.5 %": round(prob_55 * 100, 1),
+            "Over 5.5 Fair": prob_to_fair_american(prob_55),
+            "Over 6.5 %": round(prob_65 * 100, 1),
+            "Over 6.5 Fair": prob_to_fair_american(prob_65),
+            "K Score": round((prob_45 * 0.30 + prob_55 * 0.45 + prob_65 * 0.25) * 100, 1),
+        }
+    )
+
+pitchers_df = pd.DataFrame(pitcher_rows)
+if not pitchers_df.empty:
+    pitchers_df = apply_relative_grades(pitchers_df, "K Score", "Grade")
+    pitchers_df = pitchers_df.sort_values("Proj Ks", ascending=False).reset_index(drop=True)
+
+# =========================================================
+# GAME PROJECTIONS
+# =========================================================
+def estimate_team_runs(team_total, weather_boost=1.0, park_hit_factor=1.0, park_hr_factor=1.0):
+    base = safe_float(team_total, 4.2)
+    weather = safe_float(weather_boost, 1.0)
+    run_env = (park_hit_factor * 0.65) + (park_hr_factor * 0.35)
+    runs = base * weather * run_env
+    return clamp(runs, 2.0, 9.5)
+
+
+def win_prob_from_run_diff(run_diff):
+    return logistic(run_diff * 0.55)
+
+
+game_projection_rows = []
+
+for game in games:
+    away_team = game["away_team"]
+    home_team = game["home_team"]
+    park_key = str(game["park"]).strip().lower()
+    park = get_park_factors(park_key)
+
+    away_pitcher_match = find_name_match(pitchers, norm_text(game["home_pitcher"])) if game["home_pitcher"] else pd.DataFrame()
+    home_pitcher_match = find_name_match(pitchers, norm_text(game["away_pitcher"])) if game["away_pitcher"] else pd.DataFrame()
+
+    away_pitch_adj = 1.00
+    home_pitch_adj = 1.00
+
+    if not home_pitcher_match.empty:
+        ap = get_pitcher_metrics(home_pitcher_match.iloc[0])
+        away_pitch_adj = 1 + ((ap["xwoba"] - 0.310) * 1.8) - ((ap["k_rate"] - 0.22) * 0.9)
+        away_pitch_adj = clamp(away_pitch_adj, 0.82, 1.18)
+
+    if not away_pitcher_match.empty:
+        hp = get_pitcher_metrics(away_pitcher_match.iloc[0])
+        home_pitch_adj = 1 + ((hp["xwoba"] - 0.310) * 1.8) - ((hp["k_rate"] - 0.22) * 0.9)
+        home_pitch_adj = clamp(home_pitch_adj, 0.82, 1.18)
+
+    wx = weather_map.get(game["gamePk"], {})
+    run_mult = safe_float(wx.get("run_mult"), 1.0)
+
+    away_team_total = 4.2 * away_pitch_adj
+    home_team_total = 4.2 * home_pitch_adj
+
+    away_runs = estimate_team_runs(
+        team_total=away_team_total,
+        weather_boost=run_mult,
+        park_hit_factor=park["hit_factor"],
+        park_hr_factor=park["hr_factor"],
+    )
+    home_runs = estimate_team_runs(
+        team_total=home_team_total,
+        weather_boost=run_mult,
+        park_hit_factor=park["hit_factor"],
+        park_hr_factor=park["hr_factor"],
+    )
+
+    run_diff = home_runs - away_runs
+    home_win_prob = win_prob_from_run_diff(run_diff)
+    away_win_prob = 1 - home_win_prob
+    projected_winner = home_team if home_win_prob >= away_win_prob else away_team
+
+    game_projection_rows.append(
+        {
+            "Matchup": f"{away_team} @ {home_team}",
+            "Away Team": away_team,
+            "Home Team": home_team,
+            "Away Runs": round(away_runs, 2),
+            "Home Runs": round(home_runs, 2),
+            "Away Win %": round(away_win_prob * 100, 1),
+            "Home Win %": round(home_win_prob * 100, 1),
+            "Projected Winner": projected_winner,
+            "Park": game["park"],
+            "Weather": weather_reason_label(
+                1.0,
+                safe_float(wx.get("hr_mult"), 1.0),
+                safe_float(wx.get("wind_out_score"), 0.0),
+                safe_float(wx.get("wind_in_score"), 0.0),
+            ),
+        }
+    )
+
+game_proj_df = pd.DataFrame(game_projection_rows)
+
 # =========================================================
 # FILTERS
 # =========================================================
+filtered_best = best_picks_df.copy()
+filtered_best = filtered_best[filtered_best["Model Score"] >= min_model_score]
+
+filtered_batters = batters_df.copy()
+filtered_batters = filtered_batters[filtered_batters["Model Score"] >= min_model_score]
+
 filtered_hr = hr_df.copy()
 filtered_hr = filtered_hr[filtered_hr["HR Probability Value"] >= min_hr_prob]
 
@@ -1009,61 +1402,138 @@ if min_grade != "All":
     filtered_hr = filtered_hr[filtered_hr["Grade"].map(grade_order).fillna(99) <= threshold]
 
 if search_name:
+    filtered_best = filtered_best[
+        filtered_best["Player"].astype(str).str.contains(search_name, case=False, na=False)
+    ]
+    filtered_batters = filtered_batters[
+        filtered_batters["Batter"].astype(str).str.contains(search_name, case=False, na=False)
+    ]
     filtered_hr = filtered_hr[
         filtered_hr["Batter"].astype(str).str.contains(search_name, case=False, na=False)
     ]
 
+filtered_best = filtered_best.sort_values("Model Score", ascending=False).reset_index(drop=True)
+filtered_batters = filtered_batters.sort_values("Model Score", ascending=False).reset_index(drop=True)
 filtered_hr = filtered_hr.sort_values(["HR Probability Value", "Batter Power"], ascending=[False, False]).reset_index(drop=True)
+
+# =========================================================
+# STYLED HR BOARD
+# =========================================================
+def color_grade(val):
+    if val == "A+":
+        return "background-color: #166534; color: white; font-weight: bold;"
+    if val == "A":
+        return "background-color: #15803d; color: white; font-weight: bold;"
+    if val == "A-":
+        return "background-color: #16a34a; color: white; font-weight: bold;"
+    if val == "B+":
+        return "background-color: #ca8a04; color: white; font-weight: bold;"
+    if val == "B":
+        return "background-color: #a16207; color: white; font-weight: bold;"
+    return "background-color: #334155; color: white;"
+
+
+def color_recent_form(val):
+    if val == "Hot":
+        return "background-color: #166534; color: white;"
+    if val == "Good":
+        return "background-color: #1d4ed8; color: white;"
+    if val == "Average":
+        return "background-color: #a16207; color: white;"
+    return "background-color: #991b1b; color: white;"
+
+
+def hr_board_styler(df: pd.DataFrame):
+    styler = (
+        df.style
+        .applymap(color_grade, subset=["Grade"])
+        .applymap(color_recent_form, subset=["Recent Form"])
+        .background_gradient(cmap="Greens", subset=["Batter Power", "Pitcher Vulnerability", "Context Score", "Power Match"])
+        .set_properties(**{"background-color": "#0f172a", "color": "white", "border-color": "#1f2937"})
+        .set_table_styles([
+            {"selector": "th", "props": [("background-color", "#111827"), ("color", "white"), ("border", "1px solid #1f2937")]},
+            {"selector": "td", "props": [("border", "1px solid #1f2937")]},
+        ])
+    )
+    return styler
+
 
 # =========================================================
 # TOP DATA
 # =========================================================
-top_pick = filtered_hr.iloc[0] if not filtered_hr.empty else hr_df.iloc[0]
-games_view = pd.DataFrame()
+top_best = filtered_best.iloc[0] if not filtered_best.empty else best_picks_df.iloc[0]
+top_hr = filtered_hr.iloc[0] if not filtered_hr.empty else hr_df.iloc[0]
+top_k = pitchers_df.iloc[0] if not pitchers_df.empty else None
 
-if games:
-    game_projection_rows = []
-    for game in games:
-        wx = weather_map.get(game["gamePk"], {})
-        game_projection_rows.append(
-            {
-                "Matchup": f'{game["away_team"]} @ {game["home_team"]}',
-                "Park": game["park"],
-                "Weather": weather_reason_label(
-                    1.0,
-                    safe_float(wx.get("hr_mult"), 1.0),
-                    safe_float(wx.get("wind_out_score"), 0.0),
-                    safe_float(wx.get("wind_in_score"), 0.0),
-                ),
-                "Temp": round(safe_float(wx.get("temp_f"), 70), 1),
-                "Wind": f'{round(safe_float(wx.get("wind_mph"), 8),1)} {wx.get("wind_dir_16","")}',
-                "HR Weather Mult": round(safe_float(wx.get("hr_mult"), 1.0), 3),
-            }
-        )
-    games_view = pd.DataFrame(game_projection_rows)
+best_total_game = None
+strongest_favorite = None
+if not game_proj_df.empty:
+    best_total_game = game_proj_df.iloc[(game_proj_df["Away Runs"] + game_proj_df["Home Runs"]).idxmax()]
+    strongest_favorite = game_proj_df.iloc[
+        game_proj_df[["Away Win %", "Home Win %"]].max(axis=1).idxmax()
+    ]
 
 # =========================================================
 # TABS
 # =========================================================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🏠 Dashboard",
     "💣 HR Board",
+    "🔥 Best Hitters",
+    "🎯 Best Pitchers",
     "🏟️ Games",
     "🛠️ Debug",
 ])
 
+# =========================================================
+# DASHBOARD
+# =========================================================
 with tab1:
     st.subheader("📊 Today at a Glance")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Top HR Pick", top_pick["Batter"])
-    c2.metric("Top HR %", top_pick["HR Probability"])
-    c3.metric("Top Grade", top_pick["Grade"])
-    c4.metric("Best Match", top_pick["Pitcher"])
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Top Overall Pick", top_best["Player"])
+    c2.metric("Top HR Pick", top_hr["Batter"])
+    c3.metric("Top HR %", top_hr["HR Probability"])
+    c4.metric("Top Pitcher K Spot", top_k["Pitcher"] if top_k is not None else "—")
+    c5.metric("Top Winner", strongest_favorite["Projected Winner"] if strongest_favorite is not None else "—")
 
-    st.subheader("🔥 Top HR Plays")
-    cards = filtered_hr.head(3)
+    if best_total_game is not None and strongest_favorite is not None:
+        g1, g2 = st.columns(2)
+        g1.metric(
+            "Highest Total Game",
+            best_total_game["Matchup"],
+            f'{round(best_total_game["Away Runs"] + best_total_game["Home Runs"], 2)} total runs',
+        )
+        g2.metric(
+            "Strongest Favorite",
+            strongest_favorite["Projected Winner"],
+            f'{round(max(strongest_favorite["Away Win %"], strongest_favorite["Home Win %"]), 1)}% win chance',
+        )
+
+    st.subheader("🔥 Top Plays")
+    cards = filtered_best.head(3)
     cols = st.columns(3)
     for i, (_, row) in enumerate(cards.iterrows()):
+        with cols[i]:
+            st.markdown(
+                f"""
+                <div class="metric-card">
+                    <h3>{row['Player']}</h3>
+                    {render_grade_pill(row['Grade'])}
+                    <p><strong>Best Prop:</strong> {row['Best Prop']}</p>
+                    <p><strong>Best Prop %:</strong> {row['Best Prop %']}</p>
+                    <p><strong>Fair Odds:</strong> {row['Fair Odds']}</p>
+                    <p><strong>Model Score:</strong> {row['Model Score']}</p>
+                    <p><strong>Why:</strong> {row['Why']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.subheader("💣 Top HR Cards")
+    hr_cards = filtered_hr.head(3)
+    cols = st.columns(3)
+    for i, (_, row) in enumerate(hr_cards.iterrows()):
         with cols[i]:
             st.markdown(
                 f"""
@@ -1077,57 +1547,96 @@ with tab1:
                     <p><strong>Pitcher Vulnerability:</strong> {row['Pitcher Vulnerability']}</p>
                     <p><strong>Context Score:</strong> {row['Context Score']}</p>
                     <p><strong>Power Match:</strong> {row['Power Match Flames']}</p>
-                    <p><strong>Why:</strong> {row['Why']}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    st.subheader("🧠 Why The Model Likes These")
-    for _, row in filtered_hr.head(5).iterrows():
-        st.markdown(f"### {row['Batter']} vs {row['Pitcher']}")
-        st.write(
-            f"""
-**HR Probability:** {row['HR Probability']}  
-**Grade:** {row['Grade']}  
-**Recent Form:** {row['Recent Form']}  
-**Batter Power:** {row['Batter Power']}  
-**Pitcher Vulnerability:** {row['Pitcher Vulnerability']}  
-**Context Score:** {row['Context Score']}  
-**Power Match:** {row['Power Match Flames']} ({row['Power Match']})  
-**Weather:** {row['Weather']}  
-**Temp/Wind:** {row['Temp']}°F, {row['Wind MPH']} mph {row['Wind Dir']}  
-**Park:** {row['Park']}  
-"""
-        )
-        st.divider()
-
+# =========================================================
+# HR BOARD
+# =========================================================
 with tab2:
     st.subheader("💣 MLB Home Run A.I. Board")
-    board = filtered_hr.copy()
+    hr_board_cols = [
+        "Batter", "Batter Team", "Grade", "HR Probability", "Recent Form",
+        "Pitcher", "Pitcher Team", "Batter Power", "Pitcher Vulnerability",
+        "Context Score", "Power Match", "Power Match Flames", "Game Status",
+        "Lineup", "Order", "EV", "HR Odds"
+    ]
+    styled = hr_board_styler(filtered_hr[hr_board_cols].head(50))
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+# =========================================================
+# BEST HITTERS
+# =========================================================
+with tab3:
+    st.subheader("🔥 Best Rated Picks For The Day")
+    best_show = filtered_best.head(25).copy()
     st.dataframe(
-        board[
-            [
-                "Batter", "Batter Team", "Grade", "HR Probability", "Recent Form",
-                "Pitcher", "Pitcher Team", "Batter Power", "Pitcher Vulnerability",
-                "Context Score", "Power Match Flames", "Game Status", "Lineup",
-                "Order", "EV", "HR Odds"
-            ]
-        ],
+        best_show[["Player", "Pitcher", "Park", "Best Prop", "Best Prop %", "Fair Odds", "Model Score", "Grade", "Why"]],
         use_container_width=True,
         hide_index=True,
     )
 
-with tab3:
-    st.subheader("🏟️ Today’s Games + HR Context")
-    if not games_view.empty:
-        st.dataframe(games_view, use_container_width=True, hide_index=True)
-    st.subheader("📅 Schedule")
+    st.subheader("⚾ Best Batter Hit Chances")
+    st.dataframe(
+        filtered_batters.sort_values("Hit %", ascending=False)[["Batter", "Pitcher", "Park", "Hit %", "Hit Fair Odds", "Model Score", "Why"]].head(20),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("💣 Best Home Run Chances")
+    st.dataframe(
+        filtered_batters.sort_values("HR %", ascending=False)[["Batter", "Pitcher", "Park", "HR %", "HR Fair Odds", "Model Score", "Why"]].head(20),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("🏃 Best Total Bases Chances")
+    st.dataframe(
+        filtered_batters.sort_values("TB %", ascending=False)[["Batter", "Pitcher", "Park", "TB %", "TB Fair Odds", "Model Score", "Why"]].head(20),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("💰 Best RBI Chances")
+    st.dataframe(
+        filtered_batters.sort_values("RBI %", ascending=False)[["Batter", "Pitcher", "Park", "RBI %", "RBI Fair Odds", "Model Score", "Why"]].head(20),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+# =========================================================
+# BEST PITCHERS
+# =========================================================
+with tab4:
+    st.subheader("🎯 Best Pitcher Strikeout Chances")
+    if pitchers_df.empty:
+        st.info("No pitcher K board available yet.")
+    else:
+        st.dataframe(
+            pitchers_df.head(25),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+# =========================================================
+# GAMES
+# =========================================================
+with tab5:
+    st.subheader("🏟️ Team Run Projections & Projected Winners")
+    st.dataframe(game_proj_df, use_container_width=True, hide_index=True)
+
+    st.subheader("📅 Today's MLB Games")
     st.dataframe(schedule_df, use_container_width=True, hide_index=True)
+
     with st.expander("Lineup Status"):
         st.dataframe(pd.DataFrame(lineup_status_rows), use_container_width=True, hide_index=True)
 
-with tab4:
+# =========================================================
+# DEBUG
+# =========================================================
+with tab6:
     st.write("Batters columns:", list(batters.columns))
     st.write("Pitchers columns:", list(pitchers.columns))
     st.write("Parks columns:", list(parks.columns))
@@ -1136,6 +1645,7 @@ with tab4:
     st.write("Pitchers rows:", len(pitchers))
     st.write("Parks rows:", len(parks))
     st.write("Matchup rows:", len(matchups))
+    st.write("Hitter rows:", len(batters_df))
     st.write("HR rows:", len(hr_df))
     if skipped:
         st.write("Skipped:")
