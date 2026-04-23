@@ -3,6 +3,14 @@ from datetime import datetime
 import pandas as pd
 import requests
 import streamlit as st
+def scale01(x, low, high):
+    try:
+        x = float(x)
+    except Exception:
+        x = low
+    if high <= low:
+        return 0.5
+    return max(0.0, min(1.0, (x - low) / (high - low))). 
 st.set_page_config(page_title="CJ HR AI Board", layout="wide")
 def scale01(x, low, high):
     try:
