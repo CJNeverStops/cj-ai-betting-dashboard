@@ -887,11 +887,7 @@ def get_park_factors(park_key):
 # =========================================================
 # MAIN HITTER MODEL
 # =========================================================
-def calc_batter_board(
-    batter_row,
-    pitcher_row,
-    matchup_row,
-):
+def calc_batter_board(batter_row, pitcher_row, matchup_row):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
     park = get_park_factors(matchup_row["_park"])
@@ -985,27 +981,13 @@ def calc_batter_board(
 # HR MODEL BOARD
 # =========================================================
 def recent_form_label(score: float) -> str:
-    if score >= 0.75:
+    if score >= 0.72:
         return "Hot"
-    if score >= 0.55:
+    if score >= 0.50:
         return "Good"
-    if score >= 0.40:
+    if score >= 0.30:
         return "Average"
     return "Slump"
-
-
-def hr_grade(prob: float) -> str:
-    if prob >= 0.22:
-        return "A+"
-    if prob >= 0.20:
-        return "A"
-    if prob >= 0.18:
-        return "A-"
-    if prob >= 0.16:
-        return "B+"
-    if prob >= 0.14:
-        return "B"
-    return "C"
 
 
 def flame_match(value: float) -> str:
@@ -1071,7 +1053,6 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "hr_probability": hr_probability,
         "recent_form_score": b["recent_form_score"],
         "recent_form_label": recent_form_label(b["recent_form_score"]),
-        "grade": hr_grade(hr_probability),
         "fair_odds": prob_to_fair_american(hr_probability),
         "weather_note": weather_reason_label(
             1.0,
@@ -1080,6 +1061,34 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
             safe_float(matchup_row.get("wind_in_score"), 0.0),
         ),
     }
+
+
+def apply_hr_grades(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if df.empty:
+        return df
+
+    q90 = df["HR Probability Value"].quantile(0.90)
+    q75 = df["HR Probability Value"].quantile(0.75)
+    q55 = df["HR Probability Value"].quantile(0.55)
+    q35 = df["HR Probability Value"].quantile(0.35)
+    q20 = df["HR Probability Value"].quantile(0.20)
+
+    def _grade(x):
+        if x >= q90:
+            return "A+"
+        if x >= q75:
+            return "A"
+        if x >= q55:
+            return "A-"
+        if x >= q35:
+            return "B+"
+        if x >= q20:
+            return "B"
+        return "C"
+
+    df["Grade"] = df["HR Probability Value"].apply(_grade)
+    return df
 
 
 # =========================================================
@@ -1130,7 +1139,7 @@ def prob_over_k_line(expected_ks, line):
 
 
 # =========================================================
-# BUILD MAIN HITTER BOARD
+# BUILD BOARDS
 # =========================================================
 hitter_rows = []
 hr_rows = []
@@ -1191,7 +1200,7 @@ for _, mrow in matchups.iterrows():
         {
             "Batter": mrow["batter"],
             "Batter Team": find_team(mrow["batter"]) or mrow.get("team", ""),
-            "Grade": hr_calc["grade"],
+            "Grade": "C",
             "HR Probability Value": round(hr_calc["hr_probability"] * 100, 1),
             "HR Probability": f'{hr_calc["hr_probability"] * 100:.1f}% ({fair_str})',
             "Recent Form": hr_calc["recent_form_label"],
@@ -1227,9 +1236,10 @@ if batters_df.empty or hr_df.empty:
     st.stop()
 
 batters_df = apply_relative_grades(batters_df, "Model Score", "Best Grade")
+hr_df = apply_hr_grades(hr_df)
 
 # =========================================================
-# BUILD BEST PICKS
+# BEST PICKS
 # =========================================================
 best_pick_rows = []
 for _, r in batters_df.iterrows():
@@ -1258,7 +1268,7 @@ for _, r in batters_df.iterrows():
 best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Model Score", ascending=False).reset_index(drop=True)
 
 # =========================================================
-# BUILD PITCHER BOARD
+# PITCHERS
 # =========================================================
 pitcher_rows = []
 
@@ -1300,7 +1310,7 @@ if not pitchers_df.empty:
     pitchers_df = pitchers_df.sort_values("Proj Ks", ascending=False).reset_index(drop=True)
 
 # =========================================================
-# GAME PROJECTIONS
+# GAMES
 # =========================================================
 def estimate_team_runs(team_total, weather_boost=1.0, park_hit_factor=1.0, park_hr_factor=1.0):
     base = safe_float(team_total, 4.2)
@@ -1446,8 +1456,8 @@ def color_recent_form(val):
 def hr_board_styler(df: pd.DataFrame):
     styler = (
         df.style
-        .applymap(color_grade, subset=["Grade"])
-        .applymap(color_recent_form, subset=["Recent Form"])
+        .map(color_grade, subset=["Grade"])
+        .map(color_recent_form, subset=["Recent Form"])
         .background_gradient(cmap="Greens", subset=["Batter Power", "Pitcher Vulnerability", "Context Score", "Power Match"])
         .set_properties(**{"background-color": "#0f172a", "color": "white", "border-color": "#1f2937"})
         .set_table_styles([
