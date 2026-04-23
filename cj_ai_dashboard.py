@@ -27,7 +27,6 @@ st.markdown(
             padding-top: 0.8rem;
             padding-bottom: 2rem;
         }
-
         .top-hero {
             background: linear-gradient(135deg, rgba(55,24,22,.96), rgba(18,25,39,.96));
             border: 1px solid rgba(249,115,22,.35);
@@ -37,26 +36,6 @@ st.markdown(
             margin-bottom: 18px;
             text-align: center;
         }
-
-        .metric-card {
-            background: linear-gradient(145deg, #0f172a, #0b1220);
-            border: 1px solid rgba(255,255,255,.07);
-            border-radius: 18px;
-            padding: 14px 16px;
-            box-shadow: 0 8px 20px rgba(0,0,0,.20);
-            min-height: 102px;
-        }
-
-        .mini-card {
-            background: linear-gradient(145deg, #101827, #0b1220);
-            border: 1px solid rgba(255,255,255,.06);
-            border-radius: 18px;
-            padding: 16px;
-            min-height: 190px;
-            box-shadow: 0 8px 20px rgba(0,0,0,.18);
-            margin-bottom: 14px;
-        }
-
         .game-card {
             background: linear-gradient(145deg, #111827, #0a1020);
             border-radius: 18px;
@@ -65,7 +44,6 @@ st.markdown(
             margin-bottom: 14px;
             box-shadow: 0 8px 22px rgba(0,0,0,.20);
         }
-
         .section-card {
             background: linear-gradient(145deg, #101827, #0a1120);
             border: 1px solid rgba(255,255,255,.07);
@@ -73,7 +51,6 @@ st.markdown(
             padding: 16px 18px;
             margin-bottom: 14px;
         }
-
         .lineup-bar {
             background: linear-gradient(90deg, rgba(13,148,90,.30), rgba(16,185,129,.12));
             border: 1px solid rgba(74,222,128,.22);
@@ -83,7 +60,6 @@ st.markdown(
             color: #d1fae5;
             font-weight: 700;
         }
-
         .impact-chip-green, .impact-chip-red, .impact-chip-neutral {
             display: inline-block;
             padding: 11px 15px;
@@ -107,20 +83,6 @@ st.markdown(
             color: #d1d5db;
             border: 1px solid #374151;
         }
-
-        .pill-green, .pill-blue, .pill-red, .pill-yellow, .pill-gray {
-            display: inline-block;
-            padding: 5px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-        .pill-green { background: rgba(34,197,94,.18); color: #bbf7d0; }
-        .pill-blue { background: rgba(59,130,246,.18); color: #bfdbfe; }
-        .pill-red { background: rgba(239,68,68,.18); color: #fecaca; }
-        .pill-yellow { background: rgba(234,179,8,.18); color: #fde68a; }
-        .pill-gray { background: rgba(100,116,139,.18); color: #e2e8f0; }
-
         .hr-table-wrap {
             overflow-x: auto;
             border: 1px solid rgba(255,255,255,.08);
@@ -155,54 +117,30 @@ st.markdown(
         table.hr-table tr:hover td {
             background: rgba(255,255,255,.03);
         }
-
         .col-grade-aplus { background:#166534; color:white; font-weight:800; text-align:center; }
         .col-grade-a { background:#15803d; color:white; font-weight:800; text-align:center; }
         .col-grade-aminus { background:#22c55e; color:white; font-weight:800; text-align:center; }
         .col-grade-bplus { background:#2563eb; color:white; font-weight:800; text-align:center; }
         .col-grade-b { background:#4f46e5; color:white; font-weight:800; text-align:center; }
         .col-grade-c { background:#6d28d9; color:white; font-weight:800; text-align:center; }
-
         .rf-hot { color:#86efac; font-weight:800; }
         .rf-good { color:#93c5fd; font-weight:800; }
         .rf-average { color:#fde68a; font-weight:800; }
         .rf-slump { color:#fca5a5; font-weight:800; }
-
         .heat-high { background: rgba(34,197,94,.36); }
         .heat-mid { background: rgba(34,197,94,.21); }
         .heat-low { background: rgba(34,197,94,.08); }
-
-        .status-scheduled {
-            color: #d1fae5;
-            font-weight: 700;
-        }
-
-        .lineup-final {
-            color: #bbf7d0;
-            font-weight: 700;
-        }
-
-        .lineup-projected {
-            color: #cbd5e1;
-            font-weight: 700;
-        }
-
-        .hr-prob-main {
-            font-weight: 800;
-            color: white;
-        }
-
-        .muted {
-            color: #94a3b8;
-        }
-
+        .status-scheduled { color: #d1fae5; font-weight: 700; }
+        .lineup-final { color: #bbf7d0; font-weight: 700; }
+        .lineup-projected { color: #cbd5e1; font-weight: 700; }
+        .hr-prob-main { font-weight: 800; color: white; }
+        .muted { color: #94a3b8; }
         div[data-testid="stMetric"] {
             background: linear-gradient(145deg, #0f172a, #0b1220);
             border: 1px solid rgba(255,255,255,.08);
             border-radius: 16px;
             padding: 10px;
         }
-
         div[data-testid="stDataFrame"] {
             border: 1px solid rgba(255,255,255,.08);
             border-radius: 14px;
@@ -304,6 +242,78 @@ def build_player_name(df: pd.DataFrame) -> pd.Series:
         return (df[first_name].astype(str).str.strip() + " " + df[last_name].astype(str).str.strip()).str.strip()
 
     raise ValueError(f"Could not build player name from columns: {list(df.columns)}")
+
+
+def normalize_player_name(name: str) -> str:
+    s = str(name).strip().lower().replace(",", "")
+    s = " ".join(s.split())
+    return s
+
+
+def split_player_name(name: str):
+    s = str(name).strip()
+    if "," in s:
+        last, first = [x.strip() for x in s.split(",", 1)]
+        return first, last
+    parts = s.split()
+    if len(parts) >= 2:
+        return parts[0], parts[-1]
+    return s, ""
+
+
+def build_player_aliases(name: str) -> set[str]:
+    first, last = split_player_name(name)
+    first_n = normalize_player_name(first)
+    last_n = normalize_player_name(last)
+    full_n = normalize_player_name(name)
+
+    aliases = {full_n}
+
+    if first_n and last_n:
+        aliases.add(f"{first_n} {last_n}")
+        aliases.add(f"{last_n} {first_n}")
+        aliases.add(f"{first_n[0]} {last_n}")
+        aliases.add(f"{first_n[0]}. {last_n}")
+        aliases.add(f"{last_n}, {first_n}")
+        aliases.add(f"{last_n}, {first_n[0]}")
+    return {normalize_player_name(x) for x in aliases if str(x).strip()}
+
+
+def player_name_match_score(name_a: str, name_b: str) -> int:
+    a_aliases = build_player_aliases(name_a)
+    b_aliases = build_player_aliases(name_b)
+
+    if a_aliases & b_aliases:
+        return 100
+
+    a_first, a_last = split_player_name(name_a)
+    b_first, b_last = split_player_name(name_b)
+
+    a_first = normalize_player_name(a_first)
+    a_last = normalize_player_name(a_last)
+    b_first = normalize_player_name(b_first)
+    b_last = normalize_player_name(b_last)
+
+    if a_last and b_last and a_last == b_last:
+        if a_first and b_first:
+            if a_first == b_first:
+                return 95
+            if a_first[0] == b_first[0]:
+                return 85
+        return 70
+
+    return 0
+
+
+def find_best_player_row(df: pd.DataFrame, name_col: str, target_name: str):
+    if df.empty:
+        return None
+    scores = df[name_col].astype(str).apply(lambda n: player_name_match_score(n, target_name))
+    best_idx = scores.idxmax()
+    best_score = scores.loc[best_idx]
+    if best_score < 70:
+        return None
+    return df.loc[best_idx]
 
 
 def prob_to_fair_american(prob: float):
@@ -474,7 +484,6 @@ def build_hr_html_table(df: pd.DataFrame) -> str:
                 html.append(f'<td class="hr-prob-main">{val}</td>')
             else:
                 html.append(f"<td>{val}</td>")
-
         html.append("</tr>")
 
     html.append("</tbody></table></div>")
@@ -592,8 +601,6 @@ def estimate_wind_direction_impact(wind_dir_deg: float, wind_mph: float, park_na
     return {
         "hr_dir_mult": clamp(hr_dir_mult, 0.82, 1.20),
         "run_dir_mult": clamp(run_dir_mult, 0.88, 1.14),
-        "wind_out_score": round(out_factor, 3),
-        "wind_in_score": round(in_factor, 3),
     }
 
 
@@ -618,8 +625,6 @@ def estimate_weather_multipliers(temp_f, wind_mph, humidity, desc="", wind_dir_d
     return {
         "run_mult": clamp(run_mult, 0.88, 1.15),
         "hr_mult": clamp(hr_mult, 0.82, 1.24),
-        "wind_out_score": wind_dir["wind_out_score"],
-        "wind_in_score": wind_dir["wind_in_score"],
     }
 
 
@@ -715,7 +720,7 @@ def get_mlb_roster_map():
     return player_team
 
 # =========================================================
-# LOAD CSV
+# LOAD DATA
 # =========================================================
 batters = pd.read_csv("batters.csv")
 pitchers = pd.read_csv("pitchers.csv")
@@ -766,12 +771,11 @@ with st.sidebar:
     st.title("⚾ Filters")
     show_unconfirmed = st.toggle("Show fallback hitters when lineups aren't posted", value=True)
     min_hr_prob = st.slider("Minimum HR %", 0.0, 40.0, 10.0, 0.5)
-    min_model_score = st.slider("Minimum Hitter Model Score", 0.0, 100.0, 0.0, 0.5)
     min_grade = st.selectbox("Minimum HR Grade", ["All", "A+", "A", "A-", "B+", "B", "C"])
     search_name = st.text_input("Search Player")
 
 # =========================================================
-# DATA BUILD
+# SCHEDULE / WEATHER
 # =========================================================
 games, games_err = get_today_schedule()
 if not games:
@@ -796,60 +800,9 @@ for game in games:
         "hr_mult": wx_mult["hr_mult"],
     }
 
-def get_park_factors(park_key):
-    row = parks.loc[parks["_park"] == park_key]
-    if row.empty:
-        return {"hr_factor": 1.00, "hit_factor": 1.00}
-    row = row.iloc[0]
-    hr_raw = safe_float(row[park_hr_col], 1.00) if park_hr_col else 1.00
-    hit_raw = safe_float(row[park_hit_col], 1.00) if park_hit_col else 1.00
-    hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
-    hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
-    return {"hr_factor": hr_factor, "hit_factor": hit_factor}
-
-def get_batter_metrics(row):
-    pa_val = safe_float(row[b_pa], 250.0) if b_pa else 250.0
-    recent_proxy = clamp(pa_val / 650.0, 0.20, 1.00)
-
-    xslg = safe_float(row[b_xslg], 0.390) if b_xslg else 0.390
-    barrel = pct_to_dec(row[b_barrel], 0.08) if b_barrel else 0.08
-    hardhit = pct_to_dec(row[b_hardhit], 0.38) if b_hardhit else 0.38
-    xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
-    xwoba = safe_float(row[b_xwoba], 0.310) if b_xwoba else 0.310
-    k_rate = pct_to_dec(row[b_k], 0.22) if b_k else 0.22
-    bb_rate = pct_to_dec(row[b_bb], 0.08) if b_bb else 0.08
-
-    recent_form_score = clamp(
-        0.40 * scale01(xslg, 0.300, 0.750)
-        + 0.30 * scale01(barrel, 0.02, 0.25)
-        + 0.20 * scale01(hardhit, 0.20, 0.65)
-        + 0.10 * recent_proxy,
-        0.0, 1.0
-    )
-
-    return {
-        "xba": xba,
-        "xslg": xslg,
-        "xwoba": xwoba,
-        "barrel": barrel,
-        "hardhit": hardhit,
-        "k_rate": k_rate,
-        "bb_rate": bb_rate,
-        "recent_form_score": recent_form_score,
-    }
-
-def get_pitcher_metrics(row):
-    return {
-        "xba": safe_float(row[p_xba], 0.240) if p_xba else 0.240,
-        "xslg": safe_float(row[p_xslg], 0.390) if p_xslg else 0.390,
-        "xwoba": safe_float(row[p_xwoba], 0.310) if p_xwoba else 0.310,
-        "barrel": pct_to_dec(row[p_barrel], 0.08) if p_barrel else 0.08,
-        "hardhit": pct_to_dec(row[p_hardhit], 0.38) if p_hardhit else 0.38,
-        "k_rate": pct_to_dec(row[p_k], 0.22) if p_k else 0.22,
-        "bb_rate": pct_to_dec(row[p_bb], 0.08) if p_bb else 0.08,
-        "hr9": safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05,
-    }
-
+# =========================================================
+# MATCHUPS
+# =========================================================
 auto_rows = []
 lineup_status_rows = []
 
@@ -967,6 +920,66 @@ matchups["_batter"] = matchups["batter"].astype(str).map(norm_text)
 matchups["_pitcher"] = matchups["pitcher"].astype(str).map(norm_text)
 matchups["_park"] = matchups["park"].astype(str).str.strip().str.lower()
 
+# =========================================================
+# MODEL
+# =========================================================
+def get_park_factors(park_key):
+    row = parks.loc[parks["_park"] == park_key]
+    if row.empty:
+        return {"hr_factor": 1.00, "hit_factor": 1.00}
+    row = row.iloc[0]
+    hr_raw = safe_float(row[park_hr_col], 1.00) if park_hr_col else 1.00
+    hit_raw = safe_float(row[park_hit_col], 1.00) if park_hit_col else 1.00
+    hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
+    hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
+    return {"hr_factor": hr_factor, "hit_factor": hit_factor}
+
+
+def get_batter_metrics(row):
+    pa_val = safe_float(row[b_pa], 250.0) if b_pa else 250.0
+    recent_proxy = clamp(pa_val / 650.0, 0.20, 1.00)
+
+    xslg = safe_float(row[b_xslg], 0.390) if b_xslg else 0.390
+    barrel = pct_to_dec(row[b_barrel], 0.08) if b_barrel else 0.08
+    hardhit = pct_to_dec(row[b_hardhit], 0.38) if b_hardhit else 0.38
+    xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
+    xwoba = safe_float(row[b_xwoba], 0.310) if b_xwoba else 0.310
+    k_rate = pct_to_dec(row[b_k], 0.22) if b_k else 0.22
+    bb_rate = pct_to_dec(row[b_bb], 0.08) if b_bb else 0.08
+
+    recent_form_score = clamp(
+        0.40 * scale01(xslg, 0.300, 0.750)
+        + 0.30 * scale01(barrel, 0.02, 0.25)
+        + 0.20 * scale01(hardhit, 0.20, 0.65)
+        + 0.10 * recent_proxy,
+        0.0, 1.0
+    )
+
+    return {
+        "xba": xba,
+        "xslg": xslg,
+        "xwoba": xwoba,
+        "barrel": barrel,
+        "hardhit": hardhit,
+        "k_rate": k_rate,
+        "bb_rate": bb_rate,
+        "recent_form_score": recent_form_score,
+    }
+
+
+def get_pitcher_metrics(row):
+    return {
+        "xba": safe_float(row[p_xba], 0.240) if p_xba else 0.240,
+        "xslg": safe_float(row[p_xslg], 0.390) if p_xslg else 0.390,
+        "xwoba": safe_float(row[p_xwoba], 0.310) if p_xwoba else 0.310,
+        "barrel": pct_to_dec(row[p_barrel], 0.08) if p_barrel else 0.08,
+        "hardhit": pct_to_dec(row[p_hardhit], 0.38) if p_hardhit else 0.38,
+        "k_rate": pct_to_dec(row[p_k], 0.22) if p_k else 0.22,
+        "bb_rate": pct_to_dec(row[p_bb], 0.08) if p_bb else 0.08,
+        "hr9": safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05,
+    }
+
+
 def calc_hr_model(batter_row, pitcher_row, matchup_row):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
@@ -1015,105 +1028,26 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "weather_note": weather_bucket(hr_weather_mult),
     }
 
-def calc_batter_board(batter_row, pitcher_row, matchup_row):
-    b = get_batter_metrics(batter_row)
-    p = get_pitcher_metrics(pitcher_row)
-    park = get_park_factors(matchup_row["_park"])
-
-    platoon = platoon_boost(matchup_row.get("batter_hand", ""), matchup_row.get("pitcher_hand", ""))
-    hit_weather_mult = safe_float(matchup_row.get("run_weather_mult", 1.0), 1.0)
-    hr_weather_mult = safe_float(matchup_row.get("hr_weather_mult", 1.0), 1.0)
-    plate_appearances = estimate_plate_appearances(matchup_row.get("lineup_spot", 5))
-
-    hit_score_raw = (
-        1.9 * (b["xba"] - 0.240)
-        + 0.9 * (b["xwoba"] - 0.310)
-        + 0.5 * (b["hardhit"] - 0.38)
-        - 0.9 * (b["k_rate"] - 0.22)
-        - 1.3 * (p["k_rate"] - 0.22)
-        - 1.0 * (p["xba"] - 0.240)
-    )
-    hit_prob_pa = logistic(-1.35 + hit_score_raw) * park["hit_factor"] * platoon * hit_weather_mult
-    hit_prob_pa = clamp(hit_prob_pa, 0.025, 0.55)
-    hit_prob = clamp(1 - (1 - hit_prob_pa) ** plate_appearances, 0.18, 0.88)
-
-    hr_score_raw = (
-        4.2 * (b["xslg"] - 0.390)
-        + 2.6 * (b["barrel"] - 0.08)
-        + 1.2 * (b["hardhit"] - 0.38)
-        + 2.1 * (p["xslg"] - 0.390)
-        + 1.4 * (p["barrel"] - 0.08)
-        + 0.9 * (p["hr9"] - 1.05)
-    )
-    hr_prob_pa = logistic(-3.9 + hr_score_raw)
-    hr_prob = clamp((1 - (1 - hr_prob_pa) ** plate_appearances) * park["hr_factor"] * hr_weather_mult * platoon, 0.01, 0.28)
-
-    tb_score_raw = (
-        2.6 * (b["xslg"] - 0.390)
-        + 1.2 * (b["xba"] - 0.240)
-        + 1.1 * (b["hardhit"] - 0.38)
-        + 0.8 * (b["barrel"] - 0.08)
-        + 1.4 * (p["xslg"] - 0.390)
-        + 0.5 * (p["xba"] - 0.240)
-    )
-    tb_prob_pa = clamp(logistic(-2.2 + tb_score_raw), 0.02, 0.40)
-    tb_prob = clamp(1 - (1 - tb_prob_pa) ** (plate_appearances * 0.92), 0.10, 0.72)
-
-    rbi_score_raw = (
-        1.9 * (b["xwoba"] - 0.310)
-        + 1.8 * (b["xslg"] - 0.390)
-        + 0.8 * (b["hardhit"] - 0.38)
-        + 0.8 * (p["xwoba"] - 0.310)
-    )
-    rbi_prob_pa = clamp(logistic(-2.55 + rbi_score_raw), 0.015, 0.28)
-    rbi_prob = clamp(1 - (1 - rbi_prob_pa) ** (plate_appearances * 0.95), 0.06, 0.58)
-
-    weighted_score = (hit_prob * 0.40 + tb_prob * 0.30 + rbi_prob * 0.20 + hr_prob * 0.10) * 100
-
-    return {
-        "hit_prob": hit_prob,
-        "hr_prob": hr_prob,
-        "tb_prob": tb_prob,
-        "rbi_prob": rbi_prob,
-        "weighted_score": weighted_score,
-    }
-
-hitter_rows = []
+# =========================================================
+# BUILD BOARD
+# =========================================================
 hr_rows = []
 skipped = []
 
 for _, mrow in matchups.iterrows():
-    batter_match = batters[batters["_keys"].apply(lambda s: mrow["_batter"] in s)]
-    pitcher_match = pitchers[pitchers["_keys"].apply(lambda s: mrow["_pitcher"] in s)]
+    batter_row = find_best_player_row(batters, "_player_name", mrow["batter"])
+    pitcher_row = find_best_player_row(pitchers, "_player_name", mrow["pitcher"])
 
-    if batter_match.empty:
+    if batter_row is None:
         skipped.append(f"Batter not found: {mrow['batter']}")
         continue
-    if pitcher_match.empty:
+    if pitcher_row is None:
         skipped.append(f"Pitcher not found: {mrow['pitcher']}")
         continue
 
-    batter_row = batter_match.iloc[0]
-    pitcher_row = pitcher_match.iloc[0]
-
     hr_calc = calc_hr_model(batter_row, pitcher_row, mrow)
-    hitter_calc = calc_batter_board(batter_row, pitcher_row, mrow)
-
     fair = hr_calc["fair_odds"]
     fair_str = f"{fair:+d}" if fair is not None else "N/A"
-
-    hitter_rows.append(
-        {
-            "Batter": mrow["batter"],
-            "Pitcher": mrow["pitcher"],
-            "Park": mrow["park"],
-            "Hit %": round(hitter_calc["hit_prob"] * 100, 1),
-            "HR %": round(hitter_calc["hr_prob"] * 100, 1),
-            "TB %": round(hitter_calc["tb_prob"] * 100, 1),
-            "RBI %": round(hitter_calc["rbi_prob"] * 100, 1),
-            "Model Score": round(hitter_calc["weighted_score"], 1),
-        }
-    )
 
     hr_rows.append(
         {
@@ -1145,14 +1079,11 @@ for _, mrow in matchups.iterrows():
         }
     )
 
-batters_df = pd.DataFrame(hitter_rows)
 hr_df = pd.DataFrame(hr_rows)
-
-if batters_df.empty or hr_df.empty:
-    st.error("No rows scored.")
+if hr_df.empty:
+    st.error("No HR rows scored.")
     st.stop()
 
-# grades
 q90 = hr_df["HR Probability Value"].quantile(0.90)
 q75 = hr_df["HR Probability Value"].quantile(0.75)
 q55 = hr_df["HR Probability Value"].quantile(0.55)
@@ -1174,7 +1105,6 @@ def hr_grade(x):
 
 hr_df["Grade"] = hr_df["HR Probability Value"].apply(hr_grade)
 
-# filters
 filtered_hr = hr_df[hr_df["HR Probability Value"] >= min_hr_prob].copy()
 
 if min_grade != "All":
@@ -1184,10 +1114,8 @@ if min_grade != "All":
 
 if search_name:
     filtered_hr = filtered_hr[filtered_hr["Batter"].astype(str).str.contains(search_name, case=False, na=False)]
-    batters_df = batters_df[batters_df["Batter"].astype(str).str.contains(search_name, case=False, na=False)]
 
 filtered_hr = filtered_hr.sort_values(["HR Probability Value", "Batter Power"], ascending=[False, False]).reset_index(drop=True)
-batters_df = batters_df.sort_values("Model Score", ascending=False).reset_index(drop=True)
 
 game_hr_summary = (
     hr_df.groupby(["Matchup", "Park"], as_index=False)
@@ -1251,6 +1179,8 @@ avg_per_game = round(total_projected_hrs / game_count, 1) if game_count else 0.0
 # =========================================================
 # UI
 # =========================================================
+st.title("🔥 CJ HR AI Board")
+
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏠 Dashboard",
     "💣 HR Board",
@@ -1385,12 +1315,24 @@ with tab4:
     st.write("HR rows:", len(hr_df))
     st.write("Filtered HR rows:", len(filtered_hr))
 
-    st.subheader("Aaron Judge Debug")
-    judge_batters = batters[batters["_player_name"].astype(str).str.contains("Aaron Judge|Judge, Aaron|A. Judge|Judge", case=False, na=False)]
-    st.dataframe(judge_batters, use_container_width=True)
+    st.subheader("Aaron Judge Name Match Debug")
+    judge_candidates = batters.copy()
+    judge_candidates["match_score"] = judge_candidates["_player_name"].astype(str).apply(
+        lambda n: player_name_match_score(n, "Aaron Judge")
+    )
+    judge_candidates = judge_candidates.sort_values("match_score", ascending=False)
+    st.dataframe(
+        judge_candidates[["_player_name", "match_score"]].head(15),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-    judge_hr = hr_df[hr_df["Batter"].astype(str).str.contains("Aaron Judge|Judge, Aaron|A. Judge|Judge", case=False, na=False)]
-    st.dataframe(judge_hr, use_container_width=True)
+    st.subheader("Direct Aaron Judge Search")
+    direct_judge = batters[batters["_player_name"].astype(str).str.contains("judge", case=False, na=False)]
+    st.dataframe(direct_judge, use_container_width=True, hide_index=True)
+
+    judge_hr = hr_df[hr_df["Batter"].astype(str).str.contains("Aaron Judge|Judge", case=False, na=False)]
+    st.dataframe(judge_hr, use_container_width=True, hide_index=True)
 
     if skipped:
         st.write("Skipped rows:")
