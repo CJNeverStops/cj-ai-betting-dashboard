@@ -142,7 +142,7 @@ st.markdown(
 )
 
 st.title("🔥 CJ Elite MLB Home Run Board")
-st.caption("Fixed version with recent form bug removed")
+st.caption("Full fixed version with helper functions included")
 
 # =========================================================
 # HELPERS
@@ -305,13 +305,31 @@ def weather_bucket(hr_mult: float) -> str:
 
 
 def recent_form_label(score: float) -> str:
-    if score >= 0.72:
+    try:
+        s = float(score)
+    except Exception:
+        return "Average"
+    if s >= 0.72:
         return "Hot"
-    if score >= 0.50:
+    if s >= 0.50:
         return "Good"
-    if score >= 0.30:
+    if s >= 0.30:
         return "Average"
     return "Slump"
+
+
+def flame_match(value: float) -> str:
+    try:
+        v = float(value)
+    except Exception:
+        return "—"
+    if v >= 0.82:
+        return "🔥🔥🔥"
+    if v >= 0.68:
+        return "🔥🔥"
+    if v >= 0.54:
+        return "🔥"
+    return "—"
 
 
 def grade_class(g: str) -> str:
@@ -363,7 +381,8 @@ def build_hr_html_table(df: pd.DataFrame) -> str:
     show_cols = [
         "Batter", "Batter Team", "Grade", "HR Probability", "Recent Form",
         "Pitcher", "Pitcher Team", "Batter Power", "Pitcher Vulnerability",
-        "Context Score", "Power Match", "Lineup", "Order", "EV", "HR Odds"
+        "Context Score", "Power Match", "Power Match Flames",
+        "Lineup", "Order", "EV", "HR Odds"
     ]
 
     html = ['<div class="hr-table-wrap"><table class="hr-table"><thead><tr>']
@@ -710,9 +729,6 @@ for game in games:
 # =========================================================
 # MATCHUPS
 # =========================================================
-def team_match_values(team_name: str) -> set[str]:
-    return {normalize_team(team_name)}
-
 auto_rows = []
 lineup_status_rows = []
 
@@ -1029,8 +1045,9 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "weather_note": weather_bucket(hr_weather_mult),
     }
 
-
-# build boards
+# =========================================================
+# BUILD BOARDS
+# =========================================================
 hitter_rows = []
 hr_rows = []
 skipped = []
@@ -1112,7 +1129,9 @@ if batters_df.empty or hr_df.empty:
     st.error("No rows scored.")
     st.stop()
 
-# grades
+# =========================================================
+# GRADES / PITCHERS / GAMES
+# =========================================================
 q90 = hr_df["HR Probability Value"].quantile(0.90)
 q75 = hr_df["HR Probability Value"].quantile(0.75)
 q55 = hr_df["HR Probability Value"].quantile(0.55)
@@ -1152,7 +1171,6 @@ if len(batters_df) >= 4:
 else:
     batters_df["Best Grade"] = "✅ STRONG"
 
-# simplified pitcher board
 pitcher_rows = []
 for pitcher_name, grp in batters_df.groupby("Pitcher"):
     p_match = pitchers[pitchers["_keys"].apply(lambda s: norm_text(pitcher_name) in s)]
@@ -1182,7 +1200,6 @@ for pitcher_name, grp in batters_df.groupby("Pitcher"):
 
 pitchers_df = pd.DataFrame(pitcher_rows)
 
-# game projections
 def get_park_factors_simple(park_key):
     return get_park_factors(park_key)
 
@@ -1212,7 +1229,6 @@ for game in games:
 
 game_proj_df = pd.DataFrame(game_projection_rows)
 
-# best picks
 best_pick_rows = []
 for _, r in batters_df.iterrows():
     prop_options = [
@@ -1237,7 +1253,6 @@ for _, r in batters_df.iterrows():
     )
 best_picks_df = pd.DataFrame(best_pick_rows).sort_values("Model Score", ascending=False).reset_index(drop=True)
 
-# filters
 filtered_best = best_picks_df[best_picks_df["Model Score"] >= min_model_score].copy()
 filtered_batters = batters_df[batters_df["Model Score"] >= min_model_score].copy()
 filtered_hr = hr_df[hr_df["HR Probability Value"] >= min_hr_prob].copy()
@@ -1256,7 +1271,6 @@ filtered_best = filtered_best.sort_values("Model Score", ascending=False).reset_
 filtered_batters = filtered_batters.sort_values("Model Score", ascending=False).reset_index(drop=True)
 filtered_hr = filtered_hr.sort_values(["HR Probability Value", "Batter Power"], ascending=[False, False]).reset_index(drop=True)
 
-# hr summary / weather
 game_hr_summary = (
     hr_df.groupby(["Matchup", "Park"], as_index=False)
     .agg(
@@ -1287,7 +1301,6 @@ for game in games:
     )
 weather_impact_df = pd.DataFrame(weather_rows)
 
-# top
 top_best = filtered_best.iloc[0] if not filtered_best.empty else best_picks_df.iloc[0]
 top_hr = filtered_hr.iloc[0] if not filtered_hr.empty else hr_df.iloc[0]
 top_k = pitchers_df.iloc[0] if not pitchers_df.empty else None
@@ -1297,7 +1310,9 @@ total_projected_hrs = round(game_hr_summary["Expected_HRs"].sum(), 1) if not gam
 game_count = len(game_hr_summary)
 avg_per_game = round(total_projected_hrs / game_count, 1) if game_count else 0.0
 
-# tabs
+# =========================================================
+# TABS
+# =========================================================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🏠 Dashboard",
     "💣 HR Board",
