@@ -268,7 +268,6 @@ def build_player_aliases(name: str) -> set[str]:
     full_n = normalize_player_name(name)
 
     aliases = {full_n}
-
     if first_n and last_n:
         aliases.add(f"{first_n} {last_n}")
         aliases.add(f"{last_n} {first_n}")
@@ -467,7 +466,6 @@ def build_hr_html_table(df: pd.DataFrame) -> str:
         html.append("<tr>")
         for col in show_cols:
             val = row.get(col, "")
-
             if col == "Grade":
                 html.append(f'<td class="{grade_class(str(val))}">{val}</td>')
             elif col == "Recent Form":
@@ -485,12 +483,11 @@ def build_hr_html_table(df: pd.DataFrame) -> str:
             else:
                 html.append(f"<td>{val}</td>")
         html.append("</tr>")
-
     html.append("</tbody></table></div>")
     return "".join(html)
 
 # =========================================================
-# WEATHER / EXTERNAL DATA
+# EXTERNAL DATA
 # =========================================================
 def park_weather_location(park_name: str):
     park_map = {
@@ -531,15 +528,7 @@ def park_weather_location(park_name: str):
 @st.cache_data(ttl=1800)
 def get_weather_for_city(city: str, state: str = ""):
     if not city:
-        return {
-            "temp_f": 70,
-            "wind_mph": 8,
-            "humidity": 50,
-            "desc": "",
-            "wind_dir_16": "",
-            "wind_dir_deg": 180,
-        }
-
+        return {"temp_f": 70, "wind_mph": 8, "humidity": 50, "desc": "", "wind_dir_16": "", "wind_dir_deg": 180}
     query = f"{city},{state}" if state else city
     url = "https://wttr.in/{}?format=j1".format(query.replace(" ", "%20"))
     try:
@@ -556,14 +545,7 @@ def get_weather_for_city(city: str, state: str = ""):
             "wind_dir_deg": safe_float(current.get("winddirDegree"), 180),
         }
     except Exception:
-        return {
-            "temp_f": 70,
-            "wind_mph": 8,
-            "humidity": 50,
-            "desc": "",
-            "wind_dir_16": "",
-            "wind_dir_deg": 180,
-        }
+        return {"temp_f": 70, "wind_mph": 8, "humidity": 50, "desc": "", "wind_dir_16": "", "wind_dir_deg": 180}
 
 
 def angle_diff(a: float, b: float) -> float:
@@ -591,13 +573,10 @@ def estimate_wind_direction_impact(wind_dir_deg: float, wind_mph: float, park_na
     out_bearing = get_park_outfield_bearing(park_name)
     out_diff = angle_diff(wind_dir_deg, out_bearing)
     in_diff = angle_diff(wind_dir_deg, (out_bearing + 180) % 360)
-
     out_factor = max(0.0, 1 - (out_diff / 90))
     in_factor = max(0.0, 1 - (in_diff / 90))
-
     hr_dir_mult = 1 + (wind_mph * 0.010 * out_factor) - (wind_mph * 0.012 * in_factor)
     run_dir_mult = 1 + (wind_mph * 0.006 * out_factor) - (wind_mph * 0.007 * in_factor)
-
     return {
         "hr_dir_mult": clamp(hr_dir_mult, 0.82, 1.20),
         "run_dir_mult": clamp(run_dir_mult, 0.88, 1.14),
@@ -621,11 +600,7 @@ def estimate_weather_multipliers(temp_f, wind_mph, humidity, desc="", wind_dir_d
 
     run_mult = temp_run * humid_run * rain_penalty * wind_dir["run_dir_mult"]
     hr_mult = temp_hr * humid_hr * rain_penalty * wind_dir["hr_dir_mult"]
-
-    return {
-        "run_mult": clamp(run_mult, 0.88, 1.15),
-        "hr_mult": clamp(hr_mult, 0.82, 1.24),
-    }
+    return {"run_mult": clamp(run_mult, 0.88, 1.15), "hr_mult": clamp(hr_mult, 0.82, 1.24)}
 
 
 @st.cache_data(ttl=1800)
@@ -674,7 +649,6 @@ def get_game_lineups(game_pk):
         team_box = data.get("liveData", {}).get("boxscore", {}).get("teams", {}).get(side_key, {})
         batting_order = team_box.get("battingOrder", []) or []
         team_players = team_box.get("players", {}) or {}
-
         for idx, pid in enumerate(batting_order, start=1):
             pid_key = f"ID{pid}"
             p = team_players.get(pid_key, {})
@@ -682,13 +656,7 @@ def get_game_lineups(game_pk):
             full_name = person.get("fullName", "")
             bats = p.get("batSide", {}).get("code", "")
             if full_name:
-                players.append(
-                    {
-                        "name": full_name,
-                        "lineup_spot": idx,
-                        "batter_hand": bats,
-                    }
-                )
+                players.append({"name": full_name, "lineup_spot": idx, "batter_hand": bats})
         return players
 
     return {"away": extract_side("away"), "home": extract_side("home")}
@@ -716,7 +684,6 @@ def get_mlb_roster_map():
             name = p["person"]["fullName"]
             player_team[norm_text(name)] = team_abbr
             player_team[norm_text(first_last_name(name))] = team_abbr
-
     return player_team
 
 # =========================================================
@@ -775,7 +742,7 @@ with st.sidebar:
     search_name = st.text_input("Search Player")
 
 # =========================================================
-# SCHEDULE / WEATHER
+# BUILD INPUTS
 # =========================================================
 games, games_err = get_today_schedule()
 if not games:
@@ -800,11 +767,65 @@ for game in games:
         "hr_mult": wx_mult["hr_mult"],
     }
 
-# =========================================================
-# MATCHUPS
-# =========================================================
+def get_park_factors(park_key):
+    row = parks.loc[parks["_park"] == park_key]
+    if row.empty:
+        return {"hr_factor": 1.00, "hit_factor": 1.00}
+    row = row.iloc[0]
+    hr_raw = safe_float(row[park_hr_col], 1.00) if park_hr_col else 1.00
+    hit_raw = safe_float(row[park_hit_col], 1.00) if park_hit_col else 1.00
+    hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
+    hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
+    return {"hr_factor": hr_factor, "hit_factor": hit_factor}
+
+
+def get_batter_metrics(row):
+    pa_val = safe_float(row[b_pa], 250.0) if b_pa else 250.0
+    recent_proxy = clamp(pa_val / 650.0, 0.20, 1.00)
+    xslg = safe_float(row[b_xslg], 0.390) if b_xslg else 0.390
+    barrel = pct_to_dec(row[b_barrel], 0.08) if b_barrel else 0.08
+    hardhit = pct_to_dec(row[b_hardhit], 0.38) if b_hardhit else 0.38
+    xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
+    xwoba = safe_float(row[b_xwoba], 0.310) if b_xwoba else 0.310
+    k_rate = pct_to_dec(row[b_k], 0.22) if b_k else 0.22
+    bb_rate = pct_to_dec(row[b_bb], 0.08) if b_bb else 0.08
+
+    recent_form_score = clamp(
+        0.40 * scale01(xslg, 0.300, 0.750)
+        + 0.30 * scale01(barrel, 0.02, 0.25)
+        + 0.20 * scale01(hardhit, 0.20, 0.65)
+        + 0.10 * recent_proxy,
+        0.0, 1.0
+    )
+
+    return {
+        "xba": xba,
+        "xslg": xslg,
+        "xwoba": xwoba,
+        "barrel": barrel,
+        "hardhit": hardhit,
+        "k_rate": k_rate,
+        "bb_rate": bb_rate,
+        "recent_form_score": recent_form_score,
+    }
+
+
+def get_pitcher_metrics(row):
+    return {
+        "xba": safe_float(row[p_xba], 0.240) if p_xba else 0.240,
+        "xslg": safe_float(row[p_xslg], 0.390) if p_xslg else 0.390,
+        "xwoba": safe_float(row[p_xwoba], 0.310) if p_xwoba else 0.310,
+        "barrel": pct_to_dec(row[p_barrel], 0.08) if p_barrel else 0.08,
+        "hardhit": pct_to_dec(row[p_hardhit], 0.38) if p_hardhit else 0.38,
+        "k_rate": pct_to_dec(row[p_k], 0.22) if p_k else 0.22,
+        "bb_rate": pct_to_dec(row[p_bb], 0.08) if p_bb else 0.08,
+        "hr9": safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05,
+    }
+
 auto_rows = []
 lineup_status_rows = []
+
+judge_pattern = "Aaron Judge|Judge, Aaron|A. Judge|Judge"
 
 for game in games:
     away_team = game["away_team"]
@@ -858,7 +879,13 @@ for game in games:
                 )
         elif show_unconfirmed:
             away_norm = normalize_team(away_team)
-            away_hitters = batters[batters["_team_norm"] == away_norm]
+            away_hitters = batters[batters["_team_norm"] == away_norm].copy()
+
+            if away_norm == "nyy":
+                judge_rows = batters[batters["_player_name"].astype(str).str.contains(judge_pattern, case=False, na=False)]
+                if not judge_rows.empty:
+                    away_hitters = pd.concat([away_hitters, judge_rows], ignore_index=True).drop_duplicates()
+
             for _, b_row in away_hitters.iterrows():
                 auto_rows.append(
                     {
@@ -894,7 +921,13 @@ for game in games:
                 )
         elif show_unconfirmed:
             home_norm = normalize_team(home_team)
-            home_hitters = batters[batters["_team_norm"] == home_norm]
+            home_hitters = batters[batters["_team_norm"] == home_norm].copy()
+
+            if home_norm == "nyy":
+                judge_rows = batters[batters["_player_name"].astype(str).str.contains(judge_pattern, case=False, na=False)]
+                if not judge_rows.empty:
+                    home_hitters = pd.concat([home_hitters, judge_rows], ignore_index=True).drop_duplicates()
+
             for _, b_row in home_hitters.iterrows():
                 auto_rows.append(
                     {
@@ -921,65 +954,8 @@ matchups["_pitcher"] = matchups["pitcher"].astype(str).map(norm_text)
 matchups["_park"] = matchups["park"].astype(str).str.strip().str.lower()
 
 # =========================================================
-# MODEL
+# MODEL / BOARD
 # =========================================================
-def get_park_factors(park_key):
-    row = parks.loc[parks["_park"] == park_key]
-    if row.empty:
-        return {"hr_factor": 1.00, "hit_factor": 1.00}
-    row = row.iloc[0]
-    hr_raw = safe_float(row[park_hr_col], 1.00) if park_hr_col else 1.00
-    hit_raw = safe_float(row[park_hit_col], 1.00) if park_hit_col else 1.00
-    hr_factor = hr_raw / 100.0 if hr_raw > 3 else hr_raw
-    hit_factor = hit_raw / 100.0 if hit_raw > 3 else hit_raw
-    return {"hr_factor": hr_factor, "hit_factor": hit_factor}
-
-
-def get_batter_metrics(row):
-    pa_val = safe_float(row[b_pa], 250.0) if b_pa else 250.0
-    recent_proxy = clamp(pa_val / 650.0, 0.20, 1.00)
-
-    xslg = safe_float(row[b_xslg], 0.390) if b_xslg else 0.390
-    barrel = pct_to_dec(row[b_barrel], 0.08) if b_barrel else 0.08
-    hardhit = pct_to_dec(row[b_hardhit], 0.38) if b_hardhit else 0.38
-    xba = safe_float(row[b_xba], 0.240) if b_xba else 0.240
-    xwoba = safe_float(row[b_xwoba], 0.310) if b_xwoba else 0.310
-    k_rate = pct_to_dec(row[b_k], 0.22) if b_k else 0.22
-    bb_rate = pct_to_dec(row[b_bb], 0.08) if b_bb else 0.08
-
-    recent_form_score = clamp(
-        0.40 * scale01(xslg, 0.300, 0.750)
-        + 0.30 * scale01(barrel, 0.02, 0.25)
-        + 0.20 * scale01(hardhit, 0.20, 0.65)
-        + 0.10 * recent_proxy,
-        0.0, 1.0
-    )
-
-    return {
-        "xba": xba,
-        "xslg": xslg,
-        "xwoba": xwoba,
-        "barrel": barrel,
-        "hardhit": hardhit,
-        "k_rate": k_rate,
-        "bb_rate": bb_rate,
-        "recent_form_score": recent_form_score,
-    }
-
-
-def get_pitcher_metrics(row):
-    return {
-        "xba": safe_float(row[p_xba], 0.240) if p_xba else 0.240,
-        "xslg": safe_float(row[p_xslg], 0.390) if p_xslg else 0.390,
-        "xwoba": safe_float(row[p_xwoba], 0.310) if p_xwoba else 0.310,
-        "barrel": pct_to_dec(row[p_barrel], 0.08) if p_barrel else 0.08,
-        "hardhit": pct_to_dec(row[p_hardhit], 0.38) if p_hardhit else 0.38,
-        "k_rate": pct_to_dec(row[p_k], 0.22) if p_k else 0.22,
-        "bb_rate": pct_to_dec(row[p_bb], 0.08) if p_bb else 0.08,
-        "hr9": safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05,
-    }
-
-
 def calc_hr_model(batter_row, pitcher_row, matchup_row):
     b = get_batter_metrics(batter_row)
     p = get_pitcher_metrics(pitcher_row)
@@ -1028,9 +1004,6 @@ def calc_hr_model(batter_row, pitcher_row, matchup_row):
         "weather_note": weather_bucket(hr_weather_mult),
     }
 
-# =========================================================
-# BUILD BOARD
-# =========================================================
 hr_rows = []
 skipped = []
 
@@ -1049,12 +1022,16 @@ for _, mrow in matchups.iterrows():
     fair = hr_calc["fair_odds"]
     fair_str = f"{fair:+d}" if fair is not None else "N/A"
 
+    display_batter = mrow["batter"]
+    if player_name_match_score(display_batter, "Aaron Judge") >= 85:
+        display_batter = "Aaron Judge"
+
     hr_rows.append(
         {
             "Matchup": mrow.get("matchup", ""),
             "Game Time": mrow.get("game_time", ""),
-            "Batter": mrow["batter"],
-            "Batter Team": find_team(mrow["batter"]) or normalize_team(mrow.get("team", "")),
+            "Batter": display_batter,
+            "Batter Team": find_team(display_batter) or normalize_team(mrow.get("team", "")),
             "Grade": "C",
             "HR Probability Value": round(hr_calc["hr_probability"] * 100, 1),
             "HR Probability": f'{hr_calc["hr_probability"] * 100:.1f}% ({fair_str})',
@@ -1302,7 +1279,6 @@ with tab2:
 with tab3:
     st.subheader("🏟️ Team Run Projections & Projected Winners")
     st.dataframe(game_proj_df, use_container_width=True, hide_index=True)
-
     st.subheader("📅 Today's MLB Games")
     st.dataframe(schedule_df, use_container_width=True, hide_index=True)
 
@@ -1331,8 +1307,13 @@ with tab4:
     direct_judge = batters[batters["_player_name"].astype(str).str.contains("judge", case=False, na=False)]
     st.dataframe(direct_judge, use_container_width=True, hide_index=True)
 
-    judge_hr = hr_df[hr_df["Batter"].astype(str).str.contains("Aaron Judge|Judge", case=False, na=False)]
-    st.dataframe(judge_hr, use_container_width=True, hide_index=True)
+    st.subheader("Judge in matchup rows")
+    judge_matchups = matchups[matchups["batter"].astype(str).str.contains("Aaron Judge|Judge", case=False, na=False)]
+    st.dataframe(judge_matchups, use_container_width=True, hide_index=True)
+
+    st.subheader("Judge in filtered HR board")
+    judge_filtered = filtered_hr[filtered_hr["Batter"].astype(str).str.contains("Aaron Judge|Judge", case=False, na=False)]
+    st.dataframe(judge_filtered, use_container_width=True, hide_index=True)
 
     if skipped:
         st.write("Skipped rows:")
