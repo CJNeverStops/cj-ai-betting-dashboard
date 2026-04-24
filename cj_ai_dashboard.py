@@ -26,7 +26,6 @@ st.markdown("""
 .ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:14px; }
 .ai-table th { background:#111827; padding:11px; text-align:left; white-space:nowrap; }
 .ai-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
-.reason { white-space:normal; min-width:420px; color:#cbd5e1; font-size:13px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,6 +175,13 @@ except Exception as e:
 batters["_player_name"] = build_name(batters)
 pitchers["_player_name"] = build_name(pitchers)
 
+# ✅ NEW FIX: use team column from batters.csv first
+team_col = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
+if team_col:
+    batters["_team"] = batters[team_col].astype(str).apply(normalize_team)
+else:
+    batters["_team"] = ""
+
 # columns
 b_xslg = find_col(batters, ["est_slg", "xslg", "slg"])
 b_xwoba = find_col(batters, ["est_woba", "xwoba", "woba"])
@@ -273,8 +279,11 @@ def roster_map():
 
 games = get_schedule()
 schedule_df = pd.DataFrame(games)
+
+# ✅ fallback only if CSV team column did not work
 team_map = roster_map()
-batters["_team"] = batters["_player_name"].apply(lambda x: team_map.get(norm(x), ""))
+if batters["_team"].eq("").all():
+    batters["_team"] = batters["_player_name"].apply(lambda x: team_map.get(norm(x), ""))
 
 # =========================
 # WEATHER
@@ -353,29 +362,9 @@ def batter_metrics(row):
     k_rate = pct(row[b_k], .22) if b_k else .22
     pa = safe_float(row[b_pa], 250) if b_pa else 250
 
-    power = clamp(
-        .34 * scale01(xslg, .300, .750) +
-        .24 * scale01(barrel, .02, .25) +
-        .18 * scale01(hard, .20, .65) +
-        .14 * scale01(xwoba, .250, .460) +
-        .10 * scale01(pa, 50, 650),
-        0, 1
-    )
-
-    contact = clamp(
-        .38 * scale01(xba, .190, .330) +
-        .28 * scale01(xwoba, .250, .460) +
-        .20 * (1 - scale01(k_rate, .12, .34)) +
-        .14 * scale01(hard, .20, .65),
-        0, 1
-    )
-
-    laser = clamp(
-        .50 * scale01(hard, .20, .65) +
-        .30 * scale01(barrel, .02, .25) +
-        .20 * scale01(xslg, .300, .750),
-        0, 1
-    )
+    power = clamp(.34 * scale01(xslg, .300, .750) + .24 * scale01(barrel, .02, .25) + .18 * scale01(hard, .20, .65) + .14 * scale01(xwoba, .250, .460) + .10 * scale01(pa, 50, 650), 0, 1)
+    contact = clamp(.38 * scale01(xba, .190, .330) + .28 * scale01(xwoba, .250, .460) + .20 * (1 - scale01(k_rate, .12, .34)) + .14 * scale01(hard, .20, .65), 0, 1)
+    laser = clamp(.50 * scale01(hard, .20, .65) + .30 * scale01(barrel, .02, .25) + .20 * scale01(xslg, .300, .750), 0, 1)
 
     form = "Hot" if power >= .72 or contact >= .72 else "Good" if power >= .50 or contact >= .50 else "Slump"
     return {"power": power, "contact": contact, "laser": laser, "form": form}
@@ -389,22 +378,8 @@ def pitcher_metrics(row):
     k_rate = pct(row[p_k], .22) if p_k else .22
     hr9 = safe_float(row[p_hr9], 1.05) if p_hr9 else 1.05
 
-    vuln = clamp(
-        .28 * scale01(xslg, .300, .650) +
-        .22 * scale01(xwoba, .250, .430) +
-        .18 * scale01(barrel, .02, .18) +
-        .14 * scale01(hard, .20, .60) +
-        .18 * scale01(hr9, .30, 2.20),
-        0, 1
-    )
-
-    hit_vuln = clamp(
-        .40 * scale01(xba, .190, .330) +
-        .30 * scale01(xwoba, .250, .430) +
-        .20 * scale01(hard, .20, .60) +
-        .10 * (1 - scale01(k_rate, .15, .35)),
-        0, 1
-    )
+    vuln = clamp(.28 * scale01(xslg, .300, .650) + .22 * scale01(xwoba, .250, .430) + .18 * scale01(barrel, .02, .18) + .14 * scale01(hard, .20, .60) + .18 * scale01(hr9, .30, 2.20), 0, 1)
+    hit_vuln = clamp(.40 * scale01(xba, .190, .330) + .30 * scale01(xwoba, .250, .430) + .20 * scale01(hard, .20, .60) + .10 * (1 - scale01(k_rate, .15, .35)), 0, 1)
 
     return {"vuln": vuln, "hit_vuln": hit_vuln, "k_rate": k_rate}
 
@@ -443,12 +418,7 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
 
     laser_prob = clamp(.15 + bm["laser"] * .58 + pm["vuln"] * .12, .10, .82)
 
-    reasons = [
-        f"{bm['form']} hitter",
-        f"{weather['impact']} weather",
-        f"{weather['temp']}°F",
-        f"{weather['wind']} mph wind"
-    ]
+    reasons = [f"{bm['form']} hitter", f"{weather['impact']} weather", f"{weather['temp']}°F", f"{weather['wind']} mph wind"]
     if bm["power"] >= .70: reasons.append("strong power")
     if bm["contact"] >= .65: reasons.append("strong contact")
     if bm["laser"] >= .70: reasons.append("high hard-hit/laser")
@@ -510,7 +480,6 @@ for g in games:
                 r = score_player(b["_player_name"], g["away_p"], g["home"], g["away"], g["park"], matchup, weather)
                 if r: rows.append(r)
 
-    # Judge safety injection
     if normalize_team(g["away"]) == "NYY" and g["home_p"]:
         r = score_player("Aaron Judge", g["home_p"], g["away"], g["home"], g["park"], matchup, weather)
         if r and not any(player_match(x["Player"], "Aaron Judge") and x["Matchup"] == matchup for x in rows):
@@ -524,7 +493,7 @@ for g in games:
 df = pd.DataFrame(rows)
 
 if df.empty:
-    st.error("No model rows created. Check lineups, probable pitchers, and CSV names.")
+    st.error("No model rows created. Check lineups, probable pitchers, CSV names, and team column.")
     st.stop()
 
 # =========================
@@ -568,12 +537,7 @@ for matchup, grp in df.groupby("Matchup"):
     scores = {}
     for t in teams:
         tg = grp[grp["Team"] == t]
-        scores[t] = (
-            tg["Hit %"].mean() * .30 +
-            tg["TB %"].mean() * .25 +
-            tg["RBI %"].mean() * .20 +
-            tg["HR %"].mean() * .25
-        )
+        scores[t] = tg["Hit %"].mean() * .30 + tg["TB %"].mean() * .25 + tg["RBI %"].mean() * .20 + tg["HR %"].mean() * .25
 
     t1, t2 = teams[0], teams[1]
     s1, s2 = scores[t1], scores[t2]
@@ -674,6 +638,11 @@ with tab5:
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
     st.write("Pitchers CSV rows:", len(pitchers))
+
+    st.write("Detected batter team column:", team_col if team_col else "None")
+    st.write("Batter team counts:")
+    st.dataframe(batters["_team"].value_counts().reset_index().rename(columns={"index": "Team", "_team": "Count"}), use_container_width=True)
+
     st.write("Schedule:")
     st.dataframe(schedule_df, use_container_width=True)
 
