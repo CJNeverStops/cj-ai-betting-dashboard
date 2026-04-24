@@ -10,6 +10,16 @@ def scale01(x, low, high):
         x = float(x)
     except Exception:
         x = low
+
+    if high <= low:
+        return 0.5
+
+    return max(0.0, min(1.0, (x - low) / (high - low)))
+def scale01(x, low, high):
+    try:
+        x = float(x)
+    except Exception:
+        x = low
     if high <= low:
         return 0.5
     return max(0.0, min(1.0, (x - low) / (high - low)))
