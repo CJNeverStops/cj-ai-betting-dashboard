@@ -1,3 +1,4 @@
+# FORCE REDEPLOY
 import math
 from datetime import datetime
 from typing import Optional
@@ -5,7 +6,14 @@ from typing import Optional
 import pandas as pd
 import requests
 import streamlit as st
-
+def scale01(x, low, high):
+    try:
+        x = float(x)
+    except:
+        x = low
+    if high <= low:
+        return 0.5
+    return max(0.0, min(1.0, (x - low) / (high - low)))
 # =========================================================
 # PAGE
 # =========================================================
