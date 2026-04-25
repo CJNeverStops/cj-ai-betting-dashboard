@@ -4,41 +4,49 @@ import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="CJ MLB A.I. Model", layout="wide")
+st.set_page_config(page_title="CJ MLB Elite A.I. Model", layout="wide")
 
-# =========================
+# =========================================================
 # STYLE
-# =========================
+# =========================================================
 st.markdown("""
 <style>
-.stApp { background:#070b14; color:white; }
-.block-container { max-width:1800px; padding-top:1rem; }
+.stApp { background:#050914; color:#f8fafc; }
+.block-container { max-width:1850px; padding-top:1rem; }
 .hero {
     background:linear-gradient(135deg,#3b171b,#111827);
     border:1px solid rgba(249,115,22,.35);
     border-radius:24px;
     padding:24px;
     margin-bottom:18px;
+    box-shadow:0 12px 30px rgba(0,0,0,.35);
 }
-.hero h1 { font-size:44px; font-weight:900; margin:0; }
-.hero p { color:#cbd5e1; margin-top:8px; }
+.hero h1 { font-size:44px; font-weight:900; margin:0; color:white; }
+.hero p { color:#cbd5e1; margin-top:8px; font-size:15px; }
+.metric-card {
+    background:linear-gradient(145deg,#101827,#0b1220);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:16px;
+    padding:14px;
+}
 .table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:18px; }
 .ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:14px; }
-.ai-table th { background:#111827; padding:11px; text-align:left; white-space:nowrap; }
+.ai-table th { background:#111827; color:#e5e7eb; padding:11px; text-align:left; white-space:nowrap; }
 .ai-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
+.reason-cell { white-space:normal!important; min-width:460px; color:#cbd5e1; font-size:13px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
-<h1>🔥 CJ MLB A.I. Live Model</h1>
-<p>HR • Hits • Strikeouts • Total Bases • RBIs • Lasers • Winner Probability • Weather • Hot/Slump Form</p>
+<h1>🔥 CJ MLB Elite A.I. Live Model</h1>
+<p>HR • Hits • Total Bases • RBIs • Lasers • Strikeouts • Matchup Winner Probability • Weather • Hot/Slump Form • Top 3 Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
+# =========================================================
 # HELPERS
-# =========================
+# =========================================================
 def scale01(x, low, high):
     try:
         x = float(x)
@@ -74,10 +82,10 @@ def first_last(x):
     return x
 
 def find_col(df, names):
-    cols = {str(c).lower().strip(): c for c in df.columns}
+    lower = {str(c).strip().lower(): c for c in df.columns}
     for n in names:
-        if n.lower() in cols:
-            return cols[n.lower()]
+        if n.lower() in lower:
+            return lower[n.lower()]
     for n in names:
         for c in df.columns:
             if n.lower() in str(c).lower():
@@ -98,28 +106,23 @@ def build_name(df):
     if first and last:
         return (df[first].astype(str).str.strip() + " " + df[last].astype(str).str.strip()).str.strip()
 
-    st.error(f"Could not find player name column. Found: {list(df.columns)}")
+    st.error(f"Could not find player name column. Found columns: {list(df.columns)}")
     st.stop()
 
 def player_match(a, b):
     a = norm(first_last(a))
     b = norm(first_last(b))
-
     if a == b:
         return True
-
     ap = a.split()
     bp = b.split()
-
     if len(ap) >= 2 and len(bp) >= 2:
         return ap[-1] == bp[-1] and ap[0][0] == bp[0][0]
-
     return False
 
 def find_player(df, name):
     if not name:
         return None
-
     hits = df[df["_player_name"].apply(lambda x: player_match(x, name))]
     return hits.iloc[0] if not hits.empty else None
 
@@ -133,42 +136,64 @@ def fair_odds(prob):
 def normalize_team(t):
     t = norm(t)
     teams = {
-        "new york yankees":"NYY","yankees":"NYY","nyy":"NYY",
-        "boston red sox":"BOS","red sox":"BOS","bos":"BOS",
-        "los angeles dodgers":"LAD","dodgers":"LAD","lad":"LAD",
-        "new york mets":"NYM","mets":"NYM","nym":"NYM",
+        "arizona diamondbacks":"ARI","diamondbacks":"ARI","ari":"ARI",
         "atlanta braves":"ATL","braves":"ATL","atl":"ATL",
-        "philadelphia phillies":"PHI","phillies":"PHI","phi":"PHI",
+        "baltimore orioles":"BAL","orioles":"BAL","bal":"BAL",
+        "boston red sox":"BOS","red sox":"BOS","bos":"BOS",
         "chicago cubs":"CHC","cubs":"CHC","chc":"CHC",
         "chicago white sox":"CWS","white sox":"CWS","cws":"CWS",
-        "houston astros":"HOU","astros":"HOU","hou":"HOU",
-        "texas rangers":"TEX","rangers":"TEX","tex":"TEX",
-        "san francisco giants":"SF","giants":"SF","sf":"SF",
-        "san diego padres":"SD","padres":"SD","sd":"SD",
-        "milwaukee brewers":"MIL","brewers":"MIL","mil":"MIL",
-        "detroit tigers":"DET","tigers":"DET","det":"DET",
-        "minnesota twins":"MIN","twins":"MIN","min":"MIN",
-        "pittsburgh pirates":"PIT","pirates":"PIT","pit":"PIT",
-        "washington nationals":"WSH","nationals":"WSH","wsh":"WSH",
-        "arizona diamondbacks":"ARI","diamondbacks":"ARI","ari":"ARI",
-        "colorado rockies":"COL","rockies":"COL","col":"COL",
-        "cleveland guardians":"CLE","guardians":"CLE","cle":"CLE",
-        "kansas city royals":"KC","royals":"KC","kc":"KC",
-        "toronto blue jays":"TOR","blue jays":"TOR","tor":"TOR",
-        "seattle mariners":"SEA","mariners":"SEA","sea":"SEA",
-        "tampa bay rays":"TB","rays":"TB","tb":"TB",
-        "miami marlins":"MIA","marlins":"MIA","mia":"MIA",
         "cincinnati reds":"CIN","reds":"CIN","cin":"CIN",
-        "baltimore orioles":"BAL","orioles":"BAL","bal":"BAL",
+        "cleveland guardians":"CLE","guardians":"CLE","cle":"CLE",
+        "colorado rockies":"COL","rockies":"COL","col":"COL",
+        "detroit tigers":"DET","tigers":"DET","det":"DET",
+        "houston astros":"HOU","astros":"HOU","hou":"HOU",
+        "kansas city royals":"KC","royals":"KC","kc":"KC",
         "los angeles angels":"LAA","angels":"LAA","laa":"LAA",
+        "los angeles dodgers":"LAD","dodgers":"LAD","lad":"LAD",
+        "miami marlins":"MIA","marlins":"MIA","mia":"MIA",
+        "milwaukee brewers":"MIL","brewers":"MIL","mil":"MIL",
+        "minnesota twins":"MIN","twins":"MIN","min":"MIN",
+        "new york mets":"NYM","mets":"NYM","nym":"NYM",
+        "new york yankees":"NYY","yankees":"NYY","nyy":"NYY",
         "oakland athletics":"OAK","athletics":"OAK","oak":"OAK",
-        "athletics":"OAK",
+        "philadelphia phillies":"PHI","phillies":"PHI","phi":"PHI",
+        "pittsburgh pirates":"PIT","pirates":"PIT","pit":"PIT",
+        "san diego padres":"SD","padres":"SD","sd":"SD",
+        "san francisco giants":"SF","giants":"SF","sf":"SF",
+        "seattle mariners":"SEA","mariners":"SEA","sea":"SEA",
+        "st louis cardinals":"STL","st. louis cardinals":"STL","cardinals":"STL","stl":"STL",
+        "tampa bay rays":"TB","rays":"TB","tb":"TB",
+        "texas rangers":"TEX","rangers":"TEX","tex":"TEX",
+        "toronto blue jays":"TOR","blue jays":"TOR","tor":"TOR",
+        "washington nationals":"WSH","nationals":"WSH","wsh":"WSH",
     }
     return teams.get(t, str(t).upper()[:3])
 
-# =========================
-# LOAD CSV FILES
-# =========================
+def grade_from_prob(x, kind="player"):
+    if kind == "winner":
+        if x >= 65: return "A+"
+        if x >= 60: return "A"
+        if x >= 56: return "A-"
+        if x >= 53: return "B"
+        if x >= 50: return "C"
+        return "D"
+    if kind == "k":
+        if x >= 75: return "A+"
+        if x >= 65: return "A"
+        if x >= 58: return "A-"
+        if x >= 50: return "B"
+        if x >= 42: return "C"
+        return "D"
+    if x >= 24: return "A+"
+    if x >= 20: return "A"
+    if x >= 17: return "A-"
+    if x >= 14: return "B"
+    if x >= 10: return "C"
+    return "D"
+
+# =========================================================
+# LOAD DATA
+# =========================================================
 try:
     batters = pd.read_csv("batters.csv")
     pitchers = pd.read_csv("pitchers.csv")
@@ -180,7 +205,6 @@ except Exception as e:
 batters["_player_name"] = build_name(batters)
 pitchers["_player_name"] = build_name(pitchers)
 
-# Batter stat columns
 b_xslg = find_col(batters, ["est_slg", "xslg", "slg"])
 b_xwoba = find_col(batters, ["est_woba", "xwoba", "woba"])
 b_xba = find_col(batters, ["est_ba", "xba", "ba"])
@@ -189,7 +213,6 @@ b_hard = find_col(batters, ["hard_hit", "hardhit", "hard_hit_pct"])
 b_k = find_col(batters, ["k_percent", "k%", "strikeout"])
 b_pa = find_col(batters, ["pa"])
 
-# Pitcher stat columns
 p_xslg = find_col(pitchers, ["est_slg", "xslg", "slg"])
 p_xwoba = find_col(pitchers, ["est_woba", "xwoba", "woba"])
 p_xba = find_col(pitchers, ["est_ba", "xba", "ba"])
@@ -198,27 +221,24 @@ p_hard = find_col(pitchers, ["hard_hit", "hardhit", "hard_hit_pct"])
 p_k = find_col(pitchers, ["k_percent", "k%", "strikeout"])
 p_hr9 = find_col(pitchers, ["hr_per_9", "hr9", "hr/9"])
 
-# Park columns
 park_col = find_col(parks, ["park_name", "venue_name", "park", "venue"])
 park_hr_col = find_col(parks, ["hr_factor", "home_run", "hr"])
 park_hit_col = find_col(parks, ["hit_factor", "hits", "hit"])
 parks["_park"] = parks[park_col].astype(str).str.lower().str.strip() if park_col else ""
 
-# =========================
+# =========================================================
 # MLB API
-# =========================
+# =========================================================
 @st.cache_data(ttl=1800)
 def get_schedule():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher,team"
-
     try:
         data = requests.get(url, timeout=20).json()
     except Exception:
         return []
 
     games = []
-
     for d in data.get("dates", []):
         for g in d.get("games", []):
             try:
@@ -233,13 +253,11 @@ def get_schedule():
                 })
             except Exception:
                 pass
-
     return games
 
 @st.cache_data(ttl=900)
 def get_lineups(game_pk):
     url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-
     try:
         data = requests.get(url, timeout=20).json()
     except Exception:
@@ -250,15 +268,12 @@ def get_lineups(game_pk):
         order = box.get("battingOrder", []) or []
         players = box.get("players", {}) or {}
         out = []
-
         for idx, pid in enumerate(order, 1):
             p = players.get(f"ID{pid}", {})
             name = p.get("person", {}).get("fullName", "")
             hand = p.get("batSide", {}).get("code", "")
-
             if name:
                 out.append({"name": name, "order": idx, "hand": hand})
-
         return out
 
     return {"away": side("away"), "home": side("home")}
@@ -266,22 +281,17 @@ def get_lineups(game_pk):
 @st.cache_data(ttl=86400)
 def build_full_roster():
     players = []
-
     try:
         teams = requests.get("https://statsapi.mlb.com/api/v1/teams?sportId=1", timeout=20).json().get("teams", [])
     except Exception:
-        return pd.DataFrame(columns=["name", "team"])
+        return pd.DataFrame(columns=["name", "team", "_name_norm"])
 
     for t in teams:
         team_name = t.get("name", "")
         team_id = t.get("id")
         team_abbr = normalize_team(team_name)
-
         try:
-            roster = requests.get(
-                f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster",
-                timeout=20
-            ).json().get("roster", [])
+            roster = requests.get(f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster", timeout=20).json().get("roster", [])
         except Exception:
             roster = []
 
@@ -294,15 +304,14 @@ def build_full_roster():
                     "_name_norm": norm(name),
                     "_first_last_norm": norm(first_last(name)),
                 })
-
     return pd.DataFrame(players)
 
 games = get_schedule()
 schedule_df = pd.DataFrame(games)
 
-# =========================
-# TEAM MAPPING FIX
-# =========================
+# =========================================================
+# TEAM MAPPING
+# =========================================================
 team_col = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
 
 if team_col:
@@ -319,26 +328,16 @@ if not roster_df.empty:
         roster_lookup[r["_first_last_norm"]] = r["team"]
 
     def lookup_team(player_name):
-        current = ""
-        try:
-            current = str(player_name)
-        except Exception:
-            current = ""
-        return roster_lookup.get(norm(current), roster_lookup.get(norm(first_last(current)), ""))
+        return roster_lookup.get(norm(player_name), roster_lookup.get(norm(first_last(player_name)), ""))
 
-    # If CSV team missing, fill with MLB API roster team
-    if batters["_team"].eq("").all():
-        batters["_team"] = batters["_player_name"].apply(lookup_team)
-    else:
-        missing_mask = batters["_team"].eq("")
-        batters.loc[missing_mask, "_team"] = batters.loc[missing_mask, "_player_name"].apply(lookup_team)
+    missing = batters["_team"].eq("") | batters["_team"].isna()
+    batters.loc[missing, "_team"] = batters.loc[missing, "_player_name"].apply(lookup_team)
 
-# =========================
+# =========================================================
 # WEATHER
-# =========================
+# =========================================================
 def park_city(park):
     p = norm(park)
-
     mapping = {
         "yankee stadium": ("Bronx", "NY"),
         "fenway park": ("Boston", "MA"),
@@ -362,8 +361,12 @@ def park_city(park):
         "t-mobile park": ("Seattle", "WA"),
         "progressive field": ("Cleveland", "OH"),
         "chase field": ("Phoenix", "AZ"),
+        "loanDepot park": ("Miami", "FL"),
+        "loandepot park": ("Miami", "FL"),
+        "minute maid park": ("Houston", "TX"),
+        "american family field": ("Milwaukee", "WI"),
+        "rogers centre": ("Toronto", "ON"),
     }
-
     return mapping.get(p, ("", ""))
 
 @st.cache_data(ttl=1800)
@@ -388,26 +391,20 @@ def get_weather(city, state):
 
     mult = clamp(raw, .88, 1.18)
     impact = "Good" if mult >= 1.04 else "Bad" if mult <= .97 else "Neutral"
-
     return {"temp": temp, "wind": wind, "desc": desc, "impact": impact, "mult": mult}
 
-# =========================
-# MODEL
-# =========================
+# =========================================================
+# MODEL FUNCTIONS
+# =========================================================
 def park_factor(park, kind="hr"):
     if not park_col:
         return 1.0
-
     r = parks[parks["_park"] == str(park).lower().strip()]
-
     if r.empty:
         return 1.0
-
     col = park_hr_col if kind == "hr" else park_hit_col
-
     if not col:
         return 1.0
-
     v = safe_float(r.iloc[0][col], 1.0)
     return v / 100 if v > 3 else v
 
@@ -445,8 +442,7 @@ def batter_metrics(row):
     )
 
     form = "Hot" if power >= .72 or contact >= .72 else "Good" if power >= .50 or contact >= .50 else "Slump"
-
-    return {"power": power, "contact": contact, "laser": laser, "form": form}
+    return {"power": power, "contact": contact, "laser": laser, "form": form, "k_rate": k_rate}
 
 def pitcher_metrics(row):
     xslg = safe_float(row[p_xslg], .390) if p_xslg else .390
@@ -476,19 +472,6 @@ def pitcher_metrics(row):
 
     return {"vuln": vuln, "hit_vuln": hit_vuln, "k_rate": k_rate}
 
-def grade(prob):
-    if prob >= 24:
-        return "A+"
-    if prob >= 20:
-        return "A"
-    if prob >= 17:
-        return "A-"
-    if prob >= 14:
-        return "B"
-    if prob >= 10:
-        return "C"
-    return "D"
-
 def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, order="—", lineup="Projected"):
     b = find_player(batters, batter_name)
     p = find_player(pitchers, pitcher_name)
@@ -502,38 +485,17 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
     hit_pf = park_factor(park, "hit")
     wx = weather.get("mult", 1.0)
 
-    hr_raw = (
-        (.38 * bm["power"])
-        + (.27 * pm["vuln"])
-        + (.15 * bm["laser"])
-        + (.10 * scale01(hr_pf, .80, 1.25))
-        + (.10 * scale01(wx, .90, 1.18))
-    )
+    hr_raw = (.38 * bm["power"]) + (.27 * pm["vuln"]) + (.15 * bm["laser"]) + (.10 * scale01(hr_pf, .80, 1.25)) + (.10 * scale01(wx, .90, 1.18))
     hr_prob = clamp(.06 + hr_raw * .22, .015, .34)
 
-    hit_raw = (
-        (.45 * bm["contact"])
-        + (.30 * pm["hit_vuln"])
-        + (.15 * scale01(hit_pf, .85, 1.18))
-        + (.10 * scale01(wx, .90, 1.12))
-    )
+    hit_raw = (.45 * bm["contact"]) + (.30 * pm["hit_vuln"]) + (.15 * scale01(hit_pf, .85, 1.18)) + (.10 * scale01(wx, .90, 1.12))
     hit_prob = clamp(.28 + hit_raw * .44, .18, .82)
 
-    tb_raw = (
-        (.38 * bm["power"])
-        + (.30 * bm["contact"])
-        + (.20 * pm["vuln"])
-        + (.12 * scale01(hit_pf, .85, 1.18))
-    )
+    tb_raw = (.38 * bm["power"]) + (.30 * bm["contact"]) + (.20 * pm["vuln"]) + (.12 * scale01(hit_pf, .85, 1.18))
     tb_prob = clamp(.20 + tb_raw * .48, .10, .76)
 
     order_num = order if isinstance(order, int) else 5
-    rbi_raw = (
-        (.40 * bm["power"])
-        + (.24 * pm["vuln"])
-        + (.18 * (1 - scale01(order_num, 1, 9)))
-        + (.18 * scale01(wx, .90, 1.12))
-    )
+    rbi_raw = (.40 * bm["power"]) + (.24 * pm["vuln"]) + (.18 * (1 - scale01(order_num, 1, 9))) + (.18 * scale01(wx, .90, 1.12))
     rbi_prob = clamp(.12 + rbi_raw * .42, .06, .62)
 
     laser_prob = clamp(.15 + bm["laser"] * .58 + pm["vuln"] * .12, .10, .82)
@@ -545,14 +507,12 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
         f"{weather['wind']} mph wind"
     ]
 
-    if bm["power"] >= .70:
-        reasons.append("strong power")
-    if bm["contact"] >= .65:
-        reasons.append("strong contact")
-    if bm["laser"] >= .70:
-        reasons.append("high hard-hit/laser")
-    if pm["vuln"] >= .60:
-        reasons.append("pitcher vulnerable")
+    if bm["power"] >= .70: reasons.append("strong power profile")
+    if bm["contact"] >= .65: reasons.append("strong contact profile")
+    if bm["laser"] >= .70: reasons.append("high hard-hit/laser profile")
+    if pm["vuln"] >= .60: reasons.append("pitcher vulnerable to damage")
+
+    hr_pct = round(hr_prob * 100, 1)
 
     return {
         "Matchup": matchup,
@@ -564,22 +524,23 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
         "Order": order,
         "Form": bm["form"],
         "Weather": weather["impact"],
-        "HR %": round(hr_prob * 100, 1),
+        "HR %": hr_pct,
         "Hit %": round(hit_prob * 100, 1),
         "TB %": round(tb_prob * 100, 1),
         "RBI %": round(rbi_prob * 100, 1),
         "Laser %": round(laser_prob * 100, 1),
-        "Grade": grade(round(hr_prob * 100, 1)),
+        "Grade": grade_from_prob(hr_pct),
         "HR Fair Odds": fair_odds(hr_prob),
         "Power": round(bm["power"], 2),
         "Contact": round(bm["contact"], 2),
         "Pitcher Vuln": round(pm["vuln"], 2),
         "Reasons": " • ".join(reasons),
+        "Pick Explanation": f"{batter_name} rates well because: " + " • ".join(reasons)
     }
 
-# =========================
+# =========================================================
 # BUILD PLAYER MODEL
-# =========================
+# =========================================================
 rows = []
 
 for g in games:
@@ -588,37 +549,28 @@ for g in games:
     weather = get_weather(city, state)
     lu = get_lineups(g["gamePk"])
 
-    # Away hitters vs home pitcher
     if g["home_p"]:
         if lu["away"]:
             for h in lu["away"]:
                 r = score_player(h["name"], g["home_p"], g["away"], g["home"], g["park"], matchup, weather, h["order"], "Final")
-                if r:
-                    rows.append(r)
+                if r: rows.append(r)
         else:
             team = normalize_team(g["away"])
-            team_hitters = batters[batters["_team"] == team]
-            for _, b in team_hitters.iterrows():
+            for _, b in batters[batters["_team"] == team].iterrows():
                 r = score_player(b["_player_name"], g["home_p"], g["away"], g["home"], g["park"], matchup, weather)
-                if r:
-                    rows.append(r)
+                if r: rows.append(r)
 
-    # Home hitters vs away pitcher
     if g["away_p"]:
         if lu["home"]:
             for h in lu["home"]:
                 r = score_player(h["name"], g["away_p"], g["home"], g["away"], g["park"], matchup, weather, h["order"], "Final")
-                if r:
-                    rows.append(r)
+                if r: rows.append(r)
         else:
             team = normalize_team(g["home"])
-            team_hitters = batters[batters["_team"] == team]
-            for _, b in team_hitters.iterrows():
+            for _, b in batters[batters["_team"] == team].iterrows():
                 r = score_player(b["_player_name"], g["away_p"], g["home"], g["away"], g["park"], matchup, weather)
-                if r:
-                    rows.append(r)
+                if r: rows.append(r)
 
-    # Judge safety injection
     if normalize_team(g["away"]) == "NYY" and g["home_p"]:
         r = score_player("Aaron Judge", g["home_p"], g["away"], g["home"], g["park"], matchup, weather)
         if r and not any(player_match(x["Player"], "Aaron Judge") and x["Matchup"] == matchup for x in rows):
@@ -635,15 +587,14 @@ if df.empty:
     st.error("No model rows created. Check lineups, probable pitchers, CSV names, and team mapping.")
     st.stop()
 
-# =========================
-# PITCHER STRIKEOUT MODEL
-# =========================
+# =========================================================
+# STRIKEOUT MODEL
+# =========================================================
 pitcher_rows = []
 
 for g in games:
     for p_name, opp in [(g["away_p"], g["home"]), (g["home_p"], g["away"])]:
         p = find_player(pitchers, p_name)
-
         if p is None:
             continue
 
@@ -653,58 +604,67 @@ for g in games:
         def over_prob(line):
             return clamp(1 / (1 + math.exp(-(proj_ks - line))), .05, .92)
 
+        k45 = round(over_prob(4.5) * 100, 1)
+        k55 = round(over_prob(5.5) * 100, 1)
+        k65 = round(over_prob(6.5) * 100, 1)
+        best_k = max(k45, k55, k65)
+
+        reason = "High K profile" if pm["k_rate"] >= .26 else "Average K profile" if pm["k_rate"] >= .21 else "Low K profile"
+
         pitcher_rows.append({
             "Pitcher": p_name,
             "Opponent": normalize_team(opp),
             "Projected Ks": round(proj_ks, 1),
-            "Over 4.5 K%": round(over_prob(4.5) * 100, 1),
-            "Over 5.5 K%": round(over_prob(5.5) * 100, 1),
-            "Over 6.5 K%": round(over_prob(6.5) * 100, 1),
-            "Reason": "High K profile" if pm["k_rate"] >= .26 else "Average K profile" if pm["k_rate"] >= .21 else "Low K profile"
+            "Over 4.5 K%": k45,
+            "Over 5.5 K%": k55,
+            "Over 6.5 K%": k65,
+            "Best K%": best_k,
+            "Grade": grade_from_prob(best_k, "k"),
+            "Reason": reason,
+            "Pick Explanation": f"{p_name} projects for {round(proj_ks,1)} strikeouts. Best strikeout angle rates {best_k}%. Profile note: {reason}."
         })
 
-pitcher_df = pd.DataFrame(pitcher_rows)
+pitcher_df = pd.DataFrame(pitcher_rows).sort_values("Best K%", ascending=False) if pitcher_rows else pd.DataFrame()
 
-# =========================
+# =========================================================
 # WINNER MODEL
-# =========================
+# =========================================================
 winner_rows = []
 
 for matchup, grp in df.groupby("Matchup"):
     teams = grp["Team"].dropna().unique().tolist()
-
     if len(teams) < 2:
         continue
 
     scores = {}
-
     for t in teams:
         tg = grp[grp["Team"] == t]
-        scores[t] = (
-            tg["Hit %"].mean() * .30
-            + tg["TB %"].mean() * .25
-            + tg["RBI %"].mean() * .20
-            + tg["HR %"].mean() * .25
-        )
+        scores[t] = tg["Hit %"].mean() * .30 + tg["TB %"].mean() * .25 + tg["RBI %"].mean() * .20 + tg["HR %"].mean() * .25
 
     t1, t2 = teams[0], teams[1]
     s1, s2 = scores[t1], scores[t2]
     p1 = clamp(.50 + ((s1 - s2) / 100), .35, .65)
     p2 = 1 - p1
 
+    best_team = t1 if p1 >= p2 else t2
+    best_win = round(max(p1, p2) * 100, 1)
+
     winner_rows.append({
         "Matchup": matchup,
-        "Projected Winner": t1 if p1 >= p2 else t2,
+        "Projected Winner": best_team,
         f"{t1} Win %": round(p1 * 100, 1),
         f"{t2} Win %": round(p2 * 100, 1),
-        "Reason": "Better combined HR/contact/RBI profile from listed lineup"
+        "Best Win %": best_win,
+        "Grade": grade_from_prob(best_win, "winner"),
+        "Reason": "Better combined HR/contact/RBI/total bases profile from projected lineup",
+        "Pick Explanation": f"{best_team} has the model edge because its lineup grades better across hit probability, total bases, RBIs, and HR upside. Best win probability: {best_win}%."
     })
 
-winner_df = pd.DataFrame(winner_rows)
+winner_df = pd.DataFrame(winner_rows).sort_values("Best Win %", ascending=False) if winner_rows else pd.DataFrame()
 
-# =========================
+# =========================================================
 # FILTERS
-# =========================
+# =========================================================
 with st.sidebar:
     st.header("Filters")
     search = st.text_input("Search Player")
@@ -712,15 +672,29 @@ with st.sidebar:
     sort_by = st.selectbox("Sort By", ["HR %", "Hit %", "TB %", "RBI %", "Laser %"])
 
 filtered = df[df["HR %"] >= min_hr].copy()
-
 if search:
     filtered = filtered[filtered["Player"].str.contains(search, case=False, na=False)]
-
 filtered = filtered.sort_values(sort_by, ascending=False)
 
-# =========================
-# TABLE RENDER
-# =========================
+# =========================================================
+# TOP 3 PARLAYS
+# =========================================================
+def top3_player(category):
+    return df.sort_values(category, ascending=False).head(3)[
+        ["Player", "Team", "Matchup", "Pitcher", category, "Grade", "Reasons"]
+    ].reset_index(drop=True)
+
+top3_hr = top3_player("HR %")
+top3_hit = top3_player("Hit %")
+top3_tb = top3_player("TB %")
+top3_rbi = top3_player("RBI %")
+top3_laser = top3_player("Laser %")
+top3_ks = pitcher_df.head(3).reset_index(drop=True) if not pitcher_df.empty else pd.DataFrame()
+top3_winners = winner_df.head(3).reset_index(drop=True) if not winner_df.empty else pd.DataFrame()
+
+# =========================================================
+# TABLE RENDERERS
+# =========================================================
 def grade_color(g):
     return {
         "A+":"#166534",
@@ -731,86 +705,120 @@ def grade_color(g):
         "D":"#7f1d1d"
     }.get(g, "#6d28d9")
 
-def render_table(data):
-    cols = [
-        "Player", "Team", "Grade", "HR %", "Hit %", "TB %",
-        "RBI %", "Laser %", "Form", "Weather", "Pitcher",
-        "Opp", "Lineup", "Order", "HR Fair Odds", "Reasons"
-    ]
+def prob_style(v):
+    fv = safe_float(v)
+    if fv >= 60:
+        return "background:rgba(34,197,94,.30);font-weight:800;"
+    if fv >= 35:
+        return "background:rgba(234,179,8,.18);font-weight:800;"
+    return "background:rgba(239,68,68,.16);"
+
+def render_table(data, cols=None):
+    if data.empty:
+        return "<div class='metric-card'>No data available.</div>"
+
+    if cols is None:
+        cols = list(data.columns)
 
     html = "<div class='table-wrap'><table class='ai-table'><thead><tr>"
-
     for c in cols:
         html += f"<th>{c}</th>"
-
     html += "</tr></thead><tbody>"
 
     for _, r in data.iterrows():
         html += "<tr>"
-
         for c in cols:
             v = r.get(c, "")
             style = ""
-
             if c == "Grade":
                 style = f"background:{grade_color(v)};font-weight:900;text-align:center;"
-            elif c in ["HR %", "Hit %", "TB %", "RBI %", "Laser %"]:
-                fv = safe_float(v)
-                if fv >= 60:
-                    style = "background:rgba(34,197,94,.30);"
-                elif fv >= 35:
-                    style = "background:rgba(234,179,8,.18);"
-                else:
-                    style = "background:rgba(239,68,68,.16);"
+            elif c in ["HR %", "Hit %", "TB %", "RBI %", "Laser %", "Best K%", "Over 4.5 K%", "Over 5.5 K%", "Over 6.5 K%", "Best Win %"] or "Win %" in c:
+                style = prob_style(v)
             elif c == "Form":
                 style = "color:#86efac;font-weight:900;" if v == "Hot" else "color:#93c5fd;font-weight:900;" if v == "Good" else "color:#fca5a5;font-weight:900;"
             elif c == "Weather":
                 style = "color:#86efac;font-weight:900;" if v == "Good" else "color:#fca5a5;font-weight:900;" if v == "Bad" else "color:#fde68a;font-weight:900;"
-            elif c == "Reasons":
-                style = "white-space:normal;color:#cbd5e1;font-size:13px;min-width:420px;"
-
+            elif c in ["Reasons", "Reason", "Pick Explanation"]:
+                style = "white-space:normal;color:#cbd5e1;font-size:13px;min-width:460px;"
+            elif c == "Projected Winner":
+                style = "color:#86efac;font-weight:900;"
             html += f"<td style='{style}'>{v}</td>"
-
         html += "</tr>"
 
     html += "</tbody></table></div>"
     return html
 
-# =========================
+player_cols = [
+    "Player", "Team", "Grade", "HR %", "Hit %", "TB %", "RBI %",
+    "Laser %", "Form", "Weather", "Pitcher", "Opp", "Lineup",
+    "Order", "HR Fair Odds", "Reasons"
+]
+
+pitcher_cols = [
+    "Pitcher", "Opponent", "Projected Ks", "Over 4.5 K%",
+    "Over 5.5 K%", "Over 6.5 K%", "Best K%", "Grade",
+    "Reason", "Pick Explanation"
+]
+
+# =========================================================
 # UI
-# =========================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# =========================================================
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🔥 Best Picks",
     "📋 Full Player Model",
     "🎯 Strikeouts",
     "🏆 Winner Probability",
+    "🧾 Top 3 Parlays",
     "🛠️ Debug"
 ])
 
 with tab1:
     st.subheader("🔥 Best A.I. Rated Plays")
-    st.markdown(render_table(filtered.head(35)), unsafe_allow_html=True)
+    st.markdown(render_table(filtered.head(35), player_cols), unsafe_allow_html=True)
 
 with tab2:
     st.subheader("📋 Full Live Lineup Player Model")
-    st.markdown(render_table(filtered), unsafe_allow_html=True)
+    st.markdown(render_table(filtered, player_cols), unsafe_allow_html=True)
 
 with tab3:
     st.subheader("🎯 Pitcher Strikeout Model")
-    st.dataframe(pitcher_df, use_container_width=True, hide_index=True)
+    st.markdown(render_table(pitcher_df, pitcher_cols), unsafe_allow_html=True)
 
 with tab4:
     st.subheader("🏆 Matchup Winner Probability")
-    st.dataframe(winner_df, use_container_width=True, hide_index=True)
+    st.markdown(render_table(winner_df), unsafe_allow_html=True)
 
 with tab5:
-    st.subheader("Debug")
+    st.subheader("🧾 Top 3 Parlay Picks By Category")
 
+    st.markdown("### 💣 Top 3 Home Run Picks")
+    st.markdown(render_table(top3_hr), unsafe_allow_html=True)
+
+    st.markdown("### ✅ Top 3 Hit Picks")
+    st.markdown(render_table(top3_hit), unsafe_allow_html=True)
+
+    st.markdown("### 🧱 Top 3 Total Bases Picks")
+    st.markdown(render_table(top3_tb), unsafe_allow_html=True)
+
+    st.markdown("### 🏃 Top 3 RBI Picks")
+    st.markdown(render_table(top3_rbi), unsafe_allow_html=True)
+
+    st.markdown("### 🚀 Top 3 Laser Picks")
+    st.markdown(render_table(top3_laser), unsafe_allow_html=True)
+
+    st.markdown("### 🎯 Top 3 Strikeout Picks")
+    st.markdown(render_table(top3_ks, pitcher_cols), unsafe_allow_html=True)
+
+    st.markdown("### 🏆 Top 3 Winner Picks")
+    st.markdown(render_table(top3_winners), unsafe_allow_html=True)
+
+with tab6:
+    st.subheader("Debug")
     st.write("Games loaded:", len(games))
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
     st.write("Pitchers CSV rows:", len(pitchers))
-
+    st.write("MLB API roster rows:", len(roster_df))
     st.write("Detected batter team column:", team_col if team_col else "None")
 
     st.write("Batter team counts:")
@@ -818,7 +826,6 @@ with tab5:
     team_counts.columns = ["Team", "Count"]
     st.dataframe(team_counts, use_container_width=True)
 
-    st.write("MLB API roster rows:", len(roster_df))
     st.write("Schedule:")
     st.dataframe(schedule_df, use_container_width=True)
 
