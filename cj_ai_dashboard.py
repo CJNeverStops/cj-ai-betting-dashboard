@@ -22,7 +22,7 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 CJ MLB ELITE AI MODEL</h1>
-<p>Live MLB slate • Dinger Score • HR • Hits • TB • RBI • Lasers • Live pitcher K stats • Tiered top 5 parlays</p>
+<p>Dinger Score 0-42 • HR • Hits • TB • RBI • Lasers • Live Pitcher K Stats • Better Hot/Cold Form • Top 5 Tiered 3-Leg Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -180,7 +180,7 @@ except Exception as e:
 batters["_name"] = make_name(batters)
 pitchers["_name"] = make_name(pitchers)
 
-# batter cols
+# Batter columns
 b_xslg = find_col(batters, ["est_slg", "xslg", "slg"])
 b_xwoba = find_col(batters, ["est_woba", "xwoba", "woba"])
 b_xba = find_col(batters, ["est_ba", "xba", "ba"])
@@ -190,14 +190,6 @@ b_k = find_col(batters, ["k_percent", "k%", "strikeout"])
 b_pa = find_col(batters, ["pa"])
 b_iso = find_col(batters, ["iso"])
 b_recent = find_col(batters, ["last7", "last14", "recent", "recent_form"])
-
-# pitcher cols
-p_xslg = find_col(pitchers, ["est_slg", "xslg", "slg"])
-p_xwoba = find_col(pitchers, ["est_woba", "xwoba", "woba"])
-p_xba = find_col(pitchers, ["est_ba", "xba", "ba"])
-p_barrel = find_col(pitchers, ["barrel", "barrel_pct", "brl"])
-p_hard = find_col(pitchers, ["hard_hit", "hardhit", "hard_hit_pct"])
-p_hr9 = find_col(pitchers, ["hr_per_9", "hr9", "hr/9"])
 
 # =========================
 # MLB API
@@ -320,18 +312,66 @@ def batter_metrics(row):
     k_rate = pct_value(row, b_k, .22)
     pa = safe_float(row[b_pa], 250) if b_pa else 250
     iso = safe_float(row[b_iso], .170) if b_iso else .170
-    recent = safe_float(row[b_recent], .250) if b_recent else .250
 
-    power = clamp(.30*scale01(xslg,.300,.750)+.22*scale01(barrel,.02,.25)+.18*scale01(hard,.20,.65)+.15*scale01(iso,.080,.350)+.10*scale01(xwoba,.250,.460)+.05*scale01(pa,50,650),0,1)
-    contact = clamp(.40*scale01(xba,.190,.330)+.30*scale01(xwoba,.250,.460)+.20*(1-scale01(k_rate,.12,.34))+.10*scale01(hard,.20,.65),0,1)
-    laser = clamp(.50*scale01(hard,.20,.65)+.30*scale01(barrel,.02,.25)+.20*scale01(xslg,.300,.750),0,1)
-    form_score = scale01(recent, .150, .400)
-    form = "Hot" if form_score >= .65 or power >= .72 else "Good" if form_score >= .45 or power >= .50 else "Slump"
+    power = clamp(
+        .30*scale01(xslg,.300,.750)
+        + .22*scale01(barrel,.02,.25)
+        + .18*scale01(hard,.20,.65)
+        + .15*scale01(iso,.080,.350)
+        + .10*scale01(xwoba,.250,.460)
+        + .05*scale01(pa,50,650),
+        0,1
+    )
 
-    return {"power":power, "contact":contact, "laser":laser, "form_score":form_score, "form":form}
+    contact = clamp(
+        .40*scale01(xba,.190,.330)
+        + .30*scale01(xwoba,.250,.460)
+        + .20*(1-scale01(k_rate,.12,.34))
+        + .10*scale01(hard,.20,.65),
+        0,1
+    )
+
+    laser = clamp(
+        .50*scale01(hard,.20,.65)
+        + .30*scale01(barrel,.02,.25)
+        + .20*scale01(xslg,.300,.750),
+        0,1
+    )
+
+    # UPGRADED FORM: if no real recent column, it uses power/contact/laser instead of calling everybody slump
+    if b_recent:
+        recent_raw = safe_float(row[b_recent], None)
+        if recent_raw is None or recent_raw == 0:
+            form_score = power*.55 + contact*.25 + laser*.20
+        else:
+            form_score = scale01(recent_raw, .180, .360)
+    else:
+        form_score = power*.55 + contact*.25 + laser*.20
+
+    if form_score >= .70 or power >= .78 or laser >= .78:
+        form = "🔥 Hot"
+    elif form_score >= .50 or power >= .58 or laser >= .58:
+        form = "✅ Good"
+    elif form_score >= .35:
+        form = "⚠️ Neutral"
+    else:
+        form = "❄️ Cold"
+
+    return {
+        "power": power,
+        "contact": contact,
+        "laser": laser,
+        "form_score": form_score,
+        "form": form
+    }
 
 def pitcher_vuln_from_live(live):
-    return clamp(.45*scale01(live.get("hr9",1.1),.3,2.2)+.30*scale01(live.get("era",4.2),2.5,6.0)+.25*scale01(live.get("whip",1.3),.9,1.7),0,1)
+    return clamp(
+        .45*scale01(live.get("hr9",1.1),.3,2.2)
+        + .30*scale01(live.get("era",4.2),2.5,6.0)
+        + .25*scale01(live.get("whip",1.3),.9,1.7),
+        0,1
+    )
 
 def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, order="—", lineup="Projected"):
     b = find_player(batters, batter_name)
@@ -341,9 +381,16 @@ def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, orde
     live = pitcher_live(pitcher_id)
     bm = batter_metrics(b)
     pv = pitcher_vuln_from_live(live)
-    edge = clamp(bm["power"]*.55 + bm["laser"]*.20 + pv*.25, 0, 1)
+    edge = clamp(bm["power"]*.50 + bm["laser"]*.25 + pv*.25, 0, 1)
 
-    d_score = round(clamp(10*bm["power"] + 6*pv + 5*edge + 4*bm["contact"] + 3*bm["form_score"], 0, 42), 1)
+    d_score = round(clamp(
+        10*bm["power"]
+        + 6*pv
+        + 5*edge
+        + 4*bm["contact"]
+        + 3*bm["form_score"],
+        0, 42
+    ), 1)
 
     hr_prob = clamp(.04 + (.32*bm["power"] + .25*pv + .18*edge + .15*bm["laser"] + .10*bm["form_score"]) * .28, .015, .36)
     hit_prob = clamp(.28 + (.55*bm["contact"] + .25*(1-pv) + .20*bm["form_score"]) * .42, .18, .82)
@@ -351,7 +398,11 @@ def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, orde
     rbi_prob = clamp(.12 + (.45*bm["power"] + .30*pv + .25*(1-scale01(order if isinstance(order,int) else 5,1,9))) * .42, .06, .62)
     laser_prob = clamp(.15 + bm["laser"]*.58 + pv*.12, .10, .82)
 
-    reasons = f"{bm['form']} hitter • Power {round(bm['power'],2)} • Pitcher risk {round(pv,2)} • Pitch-mix edge {round(edge,2)} • Live pitcher K9 {round(live.get('k9',8),1)}"
+    reasons = (
+        f"{bm['form']} • Power {round(bm['power'],2)} • Contact {round(bm['contact'],2)} "
+        f"• Laser {round(bm['laser'],2)} • Pitcher risk {round(pv,2)} "
+        f"• Pitch-mix edge {round(edge,2)} • Live pitcher K9 {round(live.get('k9',8),1)}"
+    )
 
     return {
         "Player": batter_name,
@@ -503,6 +554,16 @@ def render(data):
                 style = "background:rgba(34,197,94,.35);font-weight:900;" if safe_float(v)>=26 else "background:rgba(59,130,246,.25);font-weight:900;" if safe_float(v)>=22 else "background:rgba(234,179,8,.22);font-weight:900;"
             elif "%" in c or c in ["Avg Model %", "Model Combo Confidence"]:
                 style = "background:rgba(34,197,94,.25);" if safe_float(v)>=60 else "background:rgba(234,179,8,.18);" if safe_float(v)>=35 else "background:rgba(239,68,68,.15);"
+            elif c == "Form":
+                val = str(v)
+                if "Hot" in val:
+                    style = "color:#86efac;font-weight:900;"
+                elif "Good" in val:
+                    style = "color:#93c5fd;font-weight:900;"
+                elif "Neutral" in val:
+                    style = "color:#fde68a;font-weight:900;"
+                else:
+                    style = "color:#fca5a5;font-weight:900;"
             elif c in ["Reasons", "Pick Explanation", "Notes"]:
                 style = "white-space:normal;min-width:420px;color:#cbd5e1;"
             html += f"<td style='{style}'>{v}</td>"
@@ -547,7 +608,6 @@ with tab5:
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
     st.write("Pitchers CSV rows:", len(pitchers))
-    st.write("Detected batter name columns:", list(batters.columns))
-    st.write("Detected pitcher name columns:", list(pitchers.columns))
+    st.write("Detected batter recent column:", b_recent if b_recent else "None — using power/contact/laser fallback")
     st.write("Team counts:")
     st.dataframe(batters["_team"].value_counts(dropna=False).reset_index(), use_container_width=True)
