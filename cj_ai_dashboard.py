@@ -1,5 +1,7 @@
+import itertools
 import math
 from datetime import datetime
+
 import pandas as pd
 import requests
 import streamlit as st
@@ -12,7 +14,7 @@ st.set_page_config(page_title="CJ MLB Elite A.I. Model", layout="wide")
 st.markdown("""
 <style>
 .stApp { background:#050914; color:#f8fafc; }
-.block-container { max-width:1850px; padding-top:1rem; }
+.block-container { max-width:1900px; padding-top:1rem; }
 .hero {
     background:linear-gradient(135deg,#3b171b,#111827);
     border:1px solid rgba(249,115,22,.35);
@@ -23,24 +25,26 @@ st.markdown("""
 }
 .hero h1 { font-size:44px; font-weight:900; margin:0; color:white; }
 .hero p { color:#cbd5e1; margin-top:8px; font-size:15px; }
-.metric-card {
-    background:linear-gradient(145deg,#101827,#0b1220);
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:16px;
-    padding:14px;
-}
-.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:18px; }
+.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:18px; margin-bottom:20px; }
 .ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:14px; }
 .ai-table th { background:#111827; color:#e5e7eb; padding:11px; text-align:left; white-space:nowrap; }
 .ai-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
 .reason-cell { white-space:normal!important; min-width:460px; color:#cbd5e1; font-size:13px; }
+.note-card {
+    background:#0b1220;
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:16px;
+    padding:14px;
+    color:#cbd5e1;
+    margin-bottom:14px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
 <h1>🔥 CJ MLB Elite A.I. Live Model</h1>
-<p>HR • Hits • Total Bases • RBIs • Lasers • Strikeouts • Matchup Winner Probability • Weather • Hot/Slump Form • Top 3 Parlays</p>
+<p>HR • Hits • Total Bases • RBIs • Lasers • Strikeouts • Winners • Weather • Dinger Score • Top 5 3-Leg Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -169,26 +173,35 @@ def normalize_team(t):
     }
     return teams.get(t, str(t).upper()[:3])
 
-def grade_from_prob(x, kind="player"):
-    if kind == "winner":
-        if x >= 65: return "A+"
-        if x >= 60: return "A"
-        if x >= 56: return "A-"
-        if x >= 53: return "B"
-        if x >= 50: return "C"
-        return "D"
-    if kind == "k":
-        if x >= 75: return "A+"
-        if x >= 65: return "A"
-        if x >= 58: return "A-"
-        if x >= 50: return "B"
-        if x >= 42: return "C"
-        return "D"
-    if x >= 24: return "A+"
-    if x >= 20: return "A"
-    if x >= 17: return "A-"
-    if x >= 14: return "B"
-    if x >= 10: return "C"
+def grade_player(x):
+    if x >= 26: return "A+"
+    if x >= 22: return "A"
+    if x >= 18: return "A-"
+    if x >= 15: return "B"
+    if x >= 12: return "C"
+    return "D"
+
+def dinger_badge(score):
+    if score >= 26: return "🔥 Elite"
+    if score >= 22: return "💎 Great"
+    if score >= 18: return "✅ Good"
+    if score >= 15: return "🟡 Solid"
+    return "⚪ Lean"
+
+def grade_k(x):
+    if x >= 75: return "A+"
+    if x >= 65: return "A"
+    if x >= 58: return "A-"
+    if x >= 50: return "B"
+    if x >= 42: return "C"
+    return "D"
+
+def grade_winner(x):
+    if x >= 65: return "A+"
+    if x >= 60: return "A"
+    if x >= 56: return "A-"
+    if x >= 53: return "B"
+    if x >= 50: return "C"
     return "D"
 
 # =========================================================
@@ -212,6 +225,8 @@ b_barrel = find_col(batters, ["barrel", "barrel_pct", "brl"])
 b_hard = find_col(batters, ["hard_hit", "hardhit", "hard_hit_pct"])
 b_k = find_col(batters, ["k_percent", "k%", "strikeout"])
 b_pa = find_col(batters, ["pa"])
+b_iso = find_col(batters, ["iso"])
+b_recent = find_col(batters, ["last7", "last14", "recent", "recent_form"])
 
 p_xslg = find_col(pitchers, ["est_slg", "xslg", "slg"])
 p_xwoba = find_col(pitchers, ["est_woba", "xwoba", "woba"])
@@ -284,7 +299,7 @@ def build_full_roster():
     try:
         teams = requests.get("https://statsapi.mlb.com/api/v1/teams?sportId=1", timeout=20).json().get("teams", [])
     except Exception:
-        return pd.DataFrame(columns=["name", "team", "_name_norm"])
+        return pd.DataFrame(columns=["name", "team"])
 
     for t in teams:
         team_name = t.get("name", "")
@@ -309,18 +324,14 @@ def build_full_roster():
 games = get_schedule()
 schedule_df = pd.DataFrame(games)
 
-# =========================================================
-# TEAM MAPPING
-# =========================================================
+# Team mapping
 team_col = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
-
 if team_col:
     batters["_team"] = batters[team_col].astype(str).apply(normalize_team)
 else:
     batters["_team"] = ""
 
 roster_df = build_full_roster()
-
 if not roster_df.empty:
     roster_lookup = {}
     for _, r in roster_df.iterrows():
@@ -361,8 +372,8 @@ def park_city(park):
         "t-mobile park": ("Seattle", "WA"),
         "progressive field": ("Cleveland", "OH"),
         "chase field": ("Phoenix", "AZ"),
-        "loanDepot park": ("Miami", "FL"),
         "loandepot park": ("Miami", "FL"),
+        "loanDepot park": ("Miami", "FL"),
         "minute maid park": ("Houston", "TX"),
         "american family field": ("Milwaukee", "WI"),
         "rogers centre": ("Toronto", "ON"),
@@ -385,7 +396,6 @@ def get_weather(city, state):
         temp, wind, desc = 70, 7, "Unknown"
 
     raw = 1.0 + ((temp - 70) * .004) + (wind * .004)
-
     if "rain" in desc.lower() or "storm" in desc.lower():
         raw -= .06
 
@@ -416,21 +426,29 @@ def batter_metrics(row):
     hard = pct(row[b_hard], .38) if b_hard else .38
     k_rate = pct(row[b_k], .22) if b_k else .22
     pa = safe_float(row[b_pa], 250) if b_pa else 250
+    iso = safe_float(row[b_iso], .170) if b_iso else .170
+
+    if b_recent:
+        form_raw = safe_float(row[b_recent], .250)
+        form_score = scale01(form_raw, .150, .400)
+    else:
+        form_score = .50
 
     power = clamp(
-        .34 * scale01(xslg, .300, .750)
-        + .24 * scale01(barrel, .02, .25)
+        .30 * scale01(xslg, .300, .750)
+        + .22 * scale01(barrel, .02, .25)
         + .18 * scale01(hard, .20, .65)
-        + .14 * scale01(xwoba, .250, .460)
-        + .10 * scale01(pa, 50, 650),
+        + .15 * scale01(iso, .080, .350)
+        + .10 * scale01(xwoba, .250, .460)
+        + .05 * scale01(pa, 50, 650),
         0, 1
     )
 
     contact = clamp(
-        .38 * scale01(xba, .190, .330)
-        + .28 * scale01(xwoba, .250, .460)
+        .40 * scale01(xba, .190, .330)
+        + .30 * scale01(xwoba, .250, .460)
         + .20 * (1 - scale01(k_rate, .12, .34))
-        + .14 * scale01(hard, .20, .65),
+        + .10 * scale01(hard, .20, .65),
         0, 1
     )
 
@@ -441,8 +459,16 @@ def batter_metrics(row):
         0, 1
     )
 
-    form = "Hot" if power >= .72 or contact >= .72 else "Good" if power >= .50 or contact >= .50 else "Slump"
-    return {"power": power, "contact": contact, "laser": laser, "form": form, "k_rate": k_rate}
+    form = "Hot" if form_score >= .65 or power >= .72 else "Good" if form_score >= .45 or power >= .50 else "Slump"
+
+    return {
+        "power": power,
+        "contact": contact,
+        "laser": laser,
+        "form": form,
+        "form_score": form_score,
+        "k_rate": k_rate,
+    }
 
 def pitcher_metrics(row):
     xslg = safe_float(row[p_xslg], .390) if p_xslg else .390
@@ -472,6 +498,9 @@ def pitcher_metrics(row):
 
     return {"vuln": vuln, "hit_vuln": hit_vuln, "k_rate": k_rate}
 
+def pitch_mix_edge(bm, pm):
+    return clamp((bm["power"] * .55) + (bm["laser"] * .20) + (pm["vuln"] * .25), 0, 1)
+
 def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, order="—", lineup="Projected"):
     b = find_player(batters, batter_name)
     p = find_player(pitchers, pitcher_name)
@@ -481,38 +510,76 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
 
     bm = batter_metrics(b)
     pm = pitcher_metrics(p)
+
     hr_pf = park_factor(park, "hr")
     hit_pf = park_factor(park, "hit")
     wx = weather.get("mult", 1.0)
+    edge = pitch_mix_edge(bm, pm)
 
-    hr_raw = (.38 * bm["power"]) + (.27 * pm["vuln"]) + (.15 * bm["laser"]) + (.10 * scale01(hr_pf, .80, 1.25)) + (.10 * scale01(wx, .90, 1.18))
-    hr_prob = clamp(.06 + hr_raw * .22, .015, .34)
+    dinger_score = clamp(
+        10 * bm["power"]
+        + 6 * pm["vuln"]
+        + 5 * edge
+        + 4 * bm["contact"]
+        + 3 * bm["form_score"]
+        + 2 * scale01(hr_pf, .80, 1.30)
+        + 2 * scale01(wx, .90, 1.18),
+        0,
+        42
+    )
+    dinger_score = round(dinger_score, 1)
 
-    hit_raw = (.45 * bm["contact"]) + (.30 * pm["hit_vuln"]) + (.15 * scale01(hit_pf, .85, 1.18)) + (.10 * scale01(wx, .90, 1.12))
+    hr_raw = (
+        .30 * bm["power"]
+        + .22 * pm["vuln"]
+        + .18 * edge
+        + .12 * bm["laser"]
+        + .08 * scale01(hr_pf, .80, 1.25)
+        + .05 * scale01(wx, .90, 1.18)
+        + .05 * bm["form_score"]
+    )
+    hr_prob = clamp(.04 + hr_raw * .26, .015, .36)
+
+    hit_raw = (
+        .45 * bm["contact"]
+        + .30 * pm["hit_vuln"]
+        + .15 * scale01(hit_pf, .85, 1.18)
+        + .10 * scale01(wx, .90, 1.12)
+    )
     hit_prob = clamp(.28 + hit_raw * .44, .18, .82)
 
-    tb_raw = (.38 * bm["power"]) + (.30 * bm["contact"]) + (.20 * pm["vuln"]) + (.12 * scale01(hit_pf, .85, 1.18))
+    tb_raw = (
+        .36 * bm["power"]
+        + .30 * bm["contact"]
+        + .22 * pm["vuln"]
+        + .12 * scale01(hit_pf, .85, 1.18)
+    )
     tb_prob = clamp(.20 + tb_raw * .48, .10, .76)
 
     order_num = order if isinstance(order, int) else 5
-    rbi_raw = (.40 * bm["power"]) + (.24 * pm["vuln"]) + (.18 * (1 - scale01(order_num, 1, 9))) + (.18 * scale01(wx, .90, 1.12))
+    rbi_raw = (
+        .40 * bm["power"]
+        + .24 * pm["vuln"]
+        + .18 * (1 - scale01(order_num, 1, 9))
+        + .18 * scale01(wx, .90, 1.12)
+    )
     rbi_prob = clamp(.12 + rbi_raw * .42, .06, .62)
 
     laser_prob = clamp(.15 + bm["laser"] * .58 + pm["vuln"] * .12, .10, .82)
 
     reasons = [
         f"{bm['form']} hitter",
+        f"Power {round(bm['power'],2)}",
+        f"Pitcher risk {round(pm['vuln'],2)}",
+        f"Pitch-mix edge {round(edge,2)}",
         f"{weather['impact']} weather",
         f"{weather['temp']}°F",
         f"{weather['wind']} mph wind"
     ]
 
-    if bm["power"] >= .70: reasons.append("strong power profile")
-    if bm["contact"] >= .65: reasons.append("strong contact profile")
-    if bm["laser"] >= .70: reasons.append("high hard-hit/laser profile")
-    if pm["vuln"] >= .60: reasons.append("pitcher vulnerable to damage")
-
-    hr_pct = round(hr_prob * 100, 1)
+    if dinger_score >= 26: reasons.append("elite Dinger Score")
+    elif dinger_score >= 22: reasons.append("great Dinger Score")
+    elif dinger_score >= 18: reasons.append("good Dinger Score")
 
     return {
         "Matchup": matchup,
@@ -522,20 +589,23 @@ def score_player(batter_name, pitcher_name, team, opp, park, matchup, weather, o
         "Opp": normalize_team(opp),
         "Lineup": lineup,
         "Order": order,
-        "Form": bm["form"],
-        "Weather": weather["impact"],
-        "HR %": hr_pct,
+        "Dinger Score": dinger_score,
+        "Dinger Badge": dinger_badge(dinger_score),
+        "Grade": grade_player(dinger_score),
+        "HR %": round(hr_prob * 100, 1),
         "Hit %": round(hit_prob * 100, 1),
         "TB %": round(tb_prob * 100, 1),
         "RBI %": round(rbi_prob * 100, 1),
         "Laser %": round(laser_prob * 100, 1),
-        "Grade": grade_from_prob(hr_pct),
+        "Form": bm["form"],
+        "Weather": weather["impact"],
         "HR Fair Odds": fair_odds(hr_prob),
         "Power": round(bm["power"], 2),
         "Contact": round(bm["contact"], 2),
         "Pitcher Vuln": round(pm["vuln"], 2),
+        "Pitch-Mix Edge": round(edge, 2),
         "Reasons": " • ".join(reasons),
-        "Pick Explanation": f"{batter_name} rates well because: " + " • ".join(reasons)
+        "Pick Explanation": f"{batter_name} grades as {dinger_badge(dinger_score)} with a {dinger_score}/42 Dinger Score. " + " • ".join(reasons)
     }
 
 # =========================================================
@@ -571,21 +641,13 @@ for g in games:
                 r = score_player(b["_player_name"], g["away_p"], g["home"], g["away"], g["park"], matchup, weather)
                 if r: rows.append(r)
 
-    if normalize_team(g["away"]) == "NYY" and g["home_p"]:
-        r = score_player("Aaron Judge", g["home_p"], g["away"], g["home"], g["park"], matchup, weather)
-        if r and not any(player_match(x["Player"], "Aaron Judge") and x["Matchup"] == matchup for x in rows):
-            rows.append(r)
-
-    if normalize_team(g["home"]) == "NYY" and g["away_p"]:
-        r = score_player("Aaron Judge", g["away_p"], g["home"], g["away"], g["park"], matchup, weather)
-        if r and not any(player_match(x["Player"], "Aaron Judge") and x["Matchup"] == matchup for x in rows):
-            rows.append(r)
-
 df = pd.DataFrame(rows)
 
 if df.empty:
     st.error("No model rows created. Check lineups, probable pitchers, CSV names, and team mapping.")
     st.stop()
+
+df = df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
 # =========================================================
 # STRIKEOUT MODEL
@@ -608,7 +670,6 @@ for g in games:
         k55 = round(over_prob(5.5) * 100, 1)
         k65 = round(over_prob(6.5) * 100, 1)
         best_k = max(k45, k55, k65)
-
         reason = "High K profile" if pm["k_rate"] >= .26 else "Average K profile" if pm["k_rate"] >= .21 else "Low K profile"
 
         pitcher_rows.append({
@@ -619,7 +680,7 @@ for g in games:
             "Over 5.5 K%": k55,
             "Over 6.5 K%": k65,
             "Best K%": best_k,
-            "Grade": grade_from_prob(best_k, "k"),
+            "Grade": grade_k(best_k),
             "Reason": reason,
             "Pick Explanation": f"{p_name} projects for {round(proj_ks,1)} strikeouts. Best strikeout angle rates {best_k}%. Profile note: {reason}."
         })
@@ -639,13 +700,18 @@ for matchup, grp in df.groupby("Matchup"):
     scores = {}
     for t in teams:
         tg = grp[grp["Team"] == t]
-        scores[t] = tg["Hit %"].mean() * .30 + tg["TB %"].mean() * .25 + tg["RBI %"].mean() * .20 + tg["HR %"].mean() * .25
+        scores[t] = (
+            tg["Hit %"].mean() * .28
+            + tg["TB %"].mean() * .25
+            + tg["RBI %"].mean() * .20
+            + tg["HR %"].mean() * .17
+            + tg["Dinger Score"].mean() * .10
+        )
 
     t1, t2 = teams[0], teams[1]
     s1, s2 = scores[t1], scores[t2]
     p1 = clamp(.50 + ((s1 - s2) / 100), .35, .65)
     p2 = 1 - p1
-
     best_team = t1 if p1 >= p2 else t2
     best_win = round(max(p1, p2) * 100, 1)
 
@@ -655,9 +721,9 @@ for matchup, grp in df.groupby("Matchup"):
         f"{t1} Win %": round(p1 * 100, 1),
         f"{t2} Win %": round(p2 * 100, 1),
         "Best Win %": best_win,
-        "Grade": grade_from_prob(best_win, "winner"),
-        "Reason": "Better combined HR/contact/RBI/total bases profile from projected lineup",
-        "Pick Explanation": f"{best_team} has the model edge because its lineup grades better across hit probability, total bases, RBIs, and HR upside. Best win probability: {best_win}%."
+        "Grade": grade_winner(best_win),
+        "Reason": "Better combined hit/TB/RBI/HR/Dinger profile from projected lineup",
+        "Pick Explanation": f"{best_team} has the model edge because its lineup grades better across hit probability, total bases, RBIs, HR upside, and Dinger Score. Best win probability: {best_win}%."
     })
 
 winner_df = pd.DataFrame(winner_rows).sort_values("Best Win %", ascending=False) if winner_rows else pd.DataFrame()
@@ -668,32 +734,106 @@ winner_df = pd.DataFrame(winner_rows).sort_values("Best Win %", ascending=False)
 with st.sidebar:
     st.header("Filters")
     search = st.text_input("Search Player")
-    min_hr = st.slider("Minimum HR %", 0.0, 40.0, 0.0, 0.5)
-    sort_by = st.selectbox("Sort By", ["HR %", "Hit %", "TB %", "RBI %", "Laser %"])
+    min_score = st.slider("Minimum Dinger Score", 0.0, 42.0, 0.0, 0.5)
+    sort_by = st.selectbox("Sort By", ["Dinger Score", "HR %", "Hit %", "TB %", "RBI %", "Laser %"])
 
-filtered = df[df["HR %"] >= min_hr].copy()
+filtered = df[df["Dinger Score"] >= min_score].copy()
 if search:
     filtered = filtered[filtered["Player"].str.contains(search, case=False, na=False)]
 filtered = filtered.sort_values(sort_by, ascending=False)
 
 # =========================================================
-# TOP 3 PARLAYS
+# TOP 5 3-LEG PARLAYS PER CATEGORY
 # =========================================================
-def top3_player(category):
-    return df.sort_values(category, ascending=False).head(3)[
-        ["Player", "Team", "Matchup", "Pitcher", category, "Grade", "Reasons"]
-    ].reset_index(drop=True)
+def build_player_parlays(data, category, label):
+    pool = data.sort_values(category, ascending=False).head(12).copy()
+    combos = []
 
-top3_hr = top3_player("HR %")
-top3_hit = top3_player("Hit %")
-top3_tb = top3_player("TB %")
-top3_rbi = top3_player("RBI %")
-top3_laser = top3_player("Laser %")
-top3_ks = pitcher_df.head(3).reset_index(drop=True) if not pitcher_df.empty else pd.DataFrame()
-top3_winners = winner_df.head(3).reset_index(drop=True) if not winner_df.empty else pd.DataFrame()
+    for combo in itertools.combinations(pool.to_dict("records"), 3):
+        names = [c["Player"] for c in combo]
+        matchups = [c["Matchup"] for c in combo]
+
+        # avoid duplicate player and limit same-game stacking
+        if len(set(names)) < 3:
+            continue
+
+        avg_score = round(sum(safe_float(c.get(category, 0)) for c in combo) / 3, 1)
+        model_conf = round(math.prod([max(safe_float(c.get(category, 0)), 1) / 100 for c in combo]) * 100, 2)
+
+        combos.append({
+            "Parlay": f"{label} 3-Leg",
+            "Leg 1": f"{combo[0]['Player']} ({combo[0][category]}%)",
+            "Leg 2": f"{combo[1]['Player']} ({combo[1][category]}%)",
+            "Leg 3": f"{combo[2]['Player']} ({combo[2][category]}%)",
+            "Avg Model %": avg_score,
+            "Model Combo Confidence": model_conf,
+            "Notes": "Top model-rated 3-leg combo. Use as a ranking tool, not guaranteed odds."
+        })
+
+    return pd.DataFrame(combos).sort_values(["Avg Model %", "Model Combo Confidence"], ascending=False).head(5) if combos else pd.DataFrame()
+
+def build_k_parlays(data):
+    if data.empty:
+        return pd.DataFrame()
+    pool = data.sort_values("Best K%", ascending=False).head(12).copy()
+    combos = []
+
+    for combo in itertools.combinations(pool.to_dict("records"), 3):
+        names = [c["Pitcher"] for c in combo]
+        if len(set(names)) < 3:
+            continue
+
+        avg_score = round(sum(safe_float(c.get("Best K%", 0)) for c in combo) / 3, 1)
+        model_conf = round(math.prod([max(safe_float(c.get("Best K%", 0)), 1) / 100 for c in combo]) * 100, 2)
+
+        combos.append({
+            "Parlay": "Strikeout 3-Leg",
+            "Leg 1": f"{combo[0]['Pitcher']} ({combo[0]['Best K%']}%)",
+            "Leg 2": f"{combo[1]['Pitcher']} ({combo[1]['Best K%']}%)",
+            "Leg 3": f"{combo[2]['Pitcher']} ({combo[2]['Best K%']}%)",
+            "Avg Model %": avg_score,
+            "Model Combo Confidence": model_conf,
+            "Notes": "Top K-projection 3-leg combo."
+        })
+
+    return pd.DataFrame(combos).sort_values(["Avg Model %", "Model Combo Confidence"], ascending=False).head(5) if combos else pd.DataFrame()
+
+def build_winner_parlays(data):
+    if data.empty:
+        return pd.DataFrame()
+    pool = data.sort_values("Best Win %", ascending=False).head(12).copy()
+    combos = []
+
+    for combo in itertools.combinations(pool.to_dict("records"), 3):
+        matchups = [c["Matchup"] for c in combo]
+        if len(set(matchups)) < 3:
+            continue
+
+        avg_score = round(sum(safe_float(c.get("Best Win %", 0)) for c in combo) / 3, 1)
+        model_conf = round(math.prod([max(safe_float(c.get("Best Win %", 0)), 1) / 100 for c in combo]) * 100, 2)
+
+        combos.append({
+            "Parlay": "Winner 3-Leg",
+            "Leg 1": f"{combo[0]['Projected Winner']} ML ({combo[0]['Best Win %']}%)",
+            "Leg 2": f"{combo[1]['Projected Winner']} ML ({combo[1]['Best Win %']}%)",
+            "Leg 3": f"{combo[2]['Projected Winner']} ML ({combo[2]['Best Win %']}%)",
+            "Avg Model %": avg_score,
+            "Model Combo Confidence": model_conf,
+            "Notes": "Top winner-projection 3-leg combo."
+        })
+
+    return pd.DataFrame(combos).sort_values(["Avg Model %", "Model Combo Confidence"], ascending=False).head(5) if combos else pd.DataFrame()
+
+parlay_hr = build_player_parlays(df, "HR %", "HR")
+parlay_hit = build_player_parlays(df, "Hit %", "Hit")
+parlay_tb = build_player_parlays(df, "TB %", "Total Bases")
+parlay_rbi = build_player_parlays(df, "RBI %", "RBI")
+parlay_laser = build_player_parlays(df, "Laser %", "Laser")
+parlay_k = build_k_parlays(pitcher_df)
+parlay_winner = build_winner_parlays(winner_df)
 
 # =========================================================
-# TABLE RENDERERS
+# TABLE RENDER
 # =========================================================
 def grade_color(g):
     return {
@@ -713,9 +853,21 @@ def prob_style(v):
         return "background:rgba(234,179,8,.18);font-weight:800;"
     return "background:rgba(239,68,68,.16);"
 
+def dinger_style(v):
+    fv = safe_float(v)
+    if fv >= 26:
+        return "background:rgba(34,197,94,.42);font-weight:900;color:#bbf7d0;"
+    if fv >= 22:
+        return "background:rgba(59,130,246,.35);font-weight:900;color:#bfdbfe;"
+    if fv >= 18:
+        return "background:rgba(234,179,8,.28);font-weight:900;color:#fde68a;"
+    if fv >= 15:
+        return "background:rgba(249,115,22,.24);font-weight:900;color:#fed7aa;"
+    return "background:rgba(239,68,68,.16);font-weight:800;color:#fecaca;"
+
 def render_table(data, cols=None):
-    if data.empty:
-        return "<div class='metric-card'>No data available.</div>"
+    if data is None or data.empty:
+        return "<div class='note-card'>No data available.</div>"
 
     if cols is None:
         cols = list(data.columns)
@@ -730,18 +882,24 @@ def render_table(data, cols=None):
         for c in cols:
             v = r.get(c, "")
             style = ""
+
             if c == "Grade":
                 style = f"background:{grade_color(v)};font-weight:900;text-align:center;"
-            elif c in ["HR %", "Hit %", "TB %", "RBI %", "Laser %", "Best K%", "Over 4.5 K%", "Over 5.5 K%", "Over 6.5 K%", "Best Win %"] or "Win %" in c:
+            elif c == "Dinger Score":
+                style = dinger_style(v)
+            elif c in ["HR %", "Hit %", "TB %", "RBI %", "Laser %", "Best K%", "Over 4.5 K%", "Over 5.5 K%", "Over 6.5 K%", "Best Win %", "Avg Model %", "Model Combo Confidence"] or "Win %" in c:
                 style = prob_style(v)
             elif c == "Form":
                 style = "color:#86efac;font-weight:900;" if v == "Hot" else "color:#93c5fd;font-weight:900;" if v == "Good" else "color:#fca5a5;font-weight:900;"
             elif c == "Weather":
                 style = "color:#86efac;font-weight:900;" if v == "Good" else "color:#fca5a5;font-weight:900;" if v == "Bad" else "color:#fde68a;font-weight:900;"
-            elif c in ["Reasons", "Reason", "Pick Explanation"]:
+            elif c in ["Reasons", "Reason", "Pick Explanation", "Notes"]:
                 style = "white-space:normal;color:#cbd5e1;font-size:13px;min-width:460px;"
+            elif c in ["Leg 1", "Leg 2", "Leg 3"]:
+                style = "font-weight:800;color:#e5e7eb;"
             elif c == "Projected Winner":
                 style = "color:#86efac;font-weight:900;"
+
             html += f"<td style='{style}'>{v}</td>"
         html += "</tr>"
 
@@ -749,9 +907,10 @@ def render_table(data, cols=None):
     return html
 
 player_cols = [
-    "Player", "Team", "Grade", "HR %", "Hit %", "TB %", "RBI %",
-    "Laser %", "Form", "Weather", "Pitcher", "Opp", "Lineup",
-    "Order", "HR Fair Odds", "Reasons"
+    "Player", "Team", "Dinger Score", "Dinger Badge", "Grade",
+    "HR %", "Hit %", "TB %", "RBI %", "Laser %",
+    "Form", "Weather", "Pitcher", "Opp", "Lineup", "Order",
+    "HR Fair Odds", "Pitch-Mix Edge", "Reasons"
 ]
 
 pitcher_cols = [
@@ -768,13 +927,13 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📋 Full Player Model",
     "🎯 Strikeouts",
     "🏆 Winner Probability",
-    "🧾 Top 3 Parlays",
+    "🧾 Top 5 Parlays",
     "🛠️ Debug"
 ])
 
 with tab1:
     st.subheader("🔥 Best A.I. Rated Plays")
-    st.markdown(render_table(filtered.head(35), player_cols), unsafe_allow_html=True)
+    st.markdown(render_table(filtered.head(40), player_cols), unsafe_allow_html=True)
 
 with tab2:
     st.subheader("📋 Full Live Lineup Player Model")
@@ -789,28 +948,29 @@ with tab4:
     st.markdown(render_table(winner_df), unsafe_allow_html=True)
 
 with tab5:
-    st.subheader("🧾 Top 3 Parlay Picks By Category")
+    st.subheader("🧾 Top 5 3-Leg Parlays By Category")
+    st.markdown("<div class='note-card'>These are model-ranked combos. They are not guaranteed wins and do not replace checking real sportsbook lines/odds.</div>", unsafe_allow_html=True)
 
-    st.markdown("### 💣 Top 3 Home Run Picks")
-    st.markdown(render_table(top3_hr), unsafe_allow_html=True)
+    st.markdown("### 💣 Home Run Parlays")
+    st.markdown(render_table(parlay_hr), unsafe_allow_html=True)
 
-    st.markdown("### ✅ Top 3 Hit Picks")
-    st.markdown(render_table(top3_hit), unsafe_allow_html=True)
+    st.markdown("### ✅ Hit Parlays")
+    st.markdown(render_table(parlay_hit), unsafe_allow_html=True)
 
-    st.markdown("### 🧱 Top 3 Total Bases Picks")
-    st.markdown(render_table(top3_tb), unsafe_allow_html=True)
+    st.markdown("### 🧱 Total Bases Parlays")
+    st.markdown(render_table(parlay_tb), unsafe_allow_html=True)
 
-    st.markdown("### 🏃 Top 3 RBI Picks")
-    st.markdown(render_table(top3_rbi), unsafe_allow_html=True)
+    st.markdown("### 🏃 RBI Parlays")
+    st.markdown(render_table(parlay_rbi), unsafe_allow_html=True)
 
-    st.markdown("### 🚀 Top 3 Laser Picks")
-    st.markdown(render_table(top3_laser), unsafe_allow_html=True)
+    st.markdown("### 🚀 Laser Parlays")
+    st.markdown(render_table(parlay_laser), unsafe_allow_html=True)
 
-    st.markdown("### 🎯 Top 3 Strikeout Picks")
-    st.markdown(render_table(top3_ks, pitcher_cols), unsafe_allow_html=True)
+    st.markdown("### 🎯 Strikeout Parlays")
+    st.markdown(render_table(parlay_k), unsafe_allow_html=True)
 
-    st.markdown("### 🏆 Top 3 Winner Picks")
-    st.markdown(render_table(top3_winners), unsafe_allow_html=True)
+    st.markdown("### 🏆 Winner Parlays")
+    st.markdown(render_table(parlay_winner), unsafe_allow_html=True)
 
 with tab6:
     st.subheader("Debug")
@@ -831,3 +991,4 @@ with tab6:
 
     st.write("Aaron Judge check:")
     st.dataframe(df[df["Player"].str.contains("Judge", case=False, na=False)], use_container_width=True)
+    
