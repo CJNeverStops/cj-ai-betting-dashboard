@@ -1,11 +1,21 @@
 import math
 import itertools
+import time
 from datetime import datetime
 import pandas as pd
 import requests
 import streamlit as st
 
 st.set_page_config(page_title="CJ MLB ELITE AI", layout="wide")
+
+# Auto refresh every 5 minutes
+REFRESH_SECONDS = 300
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
+    st.session_state.last_refresh = time.time()
+    st.rerun()
 
 st.markdown("""
 <style>
@@ -22,13 +32,10 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 CJ MLB ELITE AI MODEL</h1>
-<p>Dinger Score 0-42 • HR • Hits • TB • RBI • Lasers • Live Pitcher K Stats • Better Hot/Cold Form • Top 5 Tiered 3-Leg Parlays</p>
+<p>Dinger Score 0-42 • HR • Hits • TB • RBI • Lasers • Live Pitcher K Stats • Auto-refreshes every 5 minutes • Removes finished games</p>
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
-# HELPERS
-# =========================
 def clamp(x, a, b):
     return max(a, min(b, x))
 
@@ -167,9 +174,6 @@ def fair_odds(p):
         return int(round(-(p / (1 - p)) * 100))
     return int(round(((1 - p) / p) * 100))
 
-# =========================
-# LOAD CSV
-# =========================
 try:
     batters = pd.read_csv("batters.csv")
     pitchers = pd.read_csv("pitchers.csv")
@@ -180,7 +184,6 @@ except Exception as e:
 batters["_name"] = make_name(batters)
 pitchers["_name"] = make_name(pitchers)
 
-# Batter columns
 b_xslg = find_col(batters, ["est_slg", "xslg", "slg"])
 b_xwoba = find_col(batters, ["est_woba", "xwoba", "woba"])
 b_xba = find_col(batters, ["est_ba", "xba", "ba"])
@@ -191,10 +194,7 @@ b_pa = find_col(batters, ["pa"])
 b_iso = find_col(batters, ["iso"])
 b_recent = find_col(batters, ["last7", "last14", "recent", "recent_form"])
 
-# =========================
-# MLB API
-# =========================
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=300)
 def get_schedule():
     today = datetime.now().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher,team"
@@ -215,11 +215,12 @@ def get_schedule():
                 "away_p_id": g["teams"]["away"].get("probablePitcher", {}).get("id", None),
                 "home_p_id": g["teams"]["home"].get("probablePitcher", {}).get("id", None),
                 "park": g.get("venue", {}).get("name", ""),
-                "time": g.get("gameDate", "")
+                "time": g.get("gameDate", ""),
+                "status": g.get("status", {}).get("detailedState", "")
             })
     return games
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=300)
 def get_lineups(game_pk):
     try:
         data = requests.get(f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live", timeout=20).json()
@@ -261,7 +262,7 @@ def build_roster():
                 out.append({"name": name, "team": team, "_norm": norm(name)})
     return pd.DataFrame(out)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def pitcher_live(pid):
     if not pid:
         return {"k_rate": .22, "k9": 8.0, "era": 4.20, "whip": 1.30, "hr9": 1.10}
@@ -290,7 +291,14 @@ def pitcher_live(pid):
     except Exception:
         return {"k_rate": .22, "k9": 8.0, "era": 4.20, "whip": 1.30, "hr9": 1.10}
 
-games = get_schedule()
+games_all = get_schedule()
+
+FINAL_STATUSES = ["final", "game over", "completed early"]
+games = [
+    g for g in games_all
+    if str(g.get("status", "")).lower() not in FINAL_STATUSES
+]
+
 roster = build_roster()
 
 team_col = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
@@ -300,9 +308,6 @@ else:
     lookup = dict(zip(roster["_norm"], roster["team"])) if not roster.empty else {}
     batters["_team"] = batters["_name"].apply(lambda x: lookup.get(norm(x), ""))
 
-# =========================
-# MODEL
-# =========================
 def batter_metrics(row):
     xslg = safe_float(row[b_xslg], .390) if b_xslg else .390
     xwoba = safe_float(row[b_xwoba], .310) if b_xwoba else .310
@@ -338,7 +343,6 @@ def batter_metrics(row):
         0,1
     )
 
-    # UPGRADED FORM: if no real recent column, it uses power/contact/laser instead of calling everybody slump
     if b_recent:
         recent_raw = safe_float(row[b_recent], None)
         if recent_raw is None or recent_raw == 0:
@@ -357,13 +361,7 @@ def batter_metrics(row):
     else:
         form = "❄️ Cold"
 
-    return {
-        "power": power,
-        "contact": contact,
-        "laser": laser,
-        "form_score": form_score,
-        "form": form
-    }
+    return {"power": power, "contact": contact, "laser": laser, "form_score": form_score, "form": form}
 
 def pitcher_vuln_from_live(live):
     return clamp(
@@ -426,9 +424,6 @@ def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, orde
         "Reasons": reasons,
     }
 
-# =========================
-# BUILD PLAYER ROWS
-# =========================
 rows = []
 
 for g in games:
@@ -459,14 +454,11 @@ for g in games:
 
 df = pd.DataFrame(rows)
 if df.empty:
-    st.error("No player rows created. Check team mapping, MLB lineups, and pitcher names.")
+    st.warning("No active/upcoming player rows created. All games may be final, or probable pitchers/lineups are missing.")
     st.stop()
 
 df = df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
-# =========================
-# K MODEL
-# =========================
 k_rows = []
 for g in games:
     for name, pid, opp in [(g["away_p"], g["away_p_id"], g["home"]), (g["home_p"], g["home_p_id"], g["away"])]:
@@ -501,9 +493,6 @@ for g in games:
 
 k_df = pd.DataFrame(k_rows).sort_values("Best K%", ascending=False) if k_rows else pd.DataFrame()
 
-# =========================
-# TIERED PARLAYS
-# =========================
 def tier_parlays(data, col, label, name_col="Player"):
     pool = data.sort_values(col, ascending=False).head(15).reset_index(drop=True)
     out = []
@@ -529,9 +518,6 @@ parlay_rbi = tier_parlays(df, "RBI %", "RBI")
 parlay_laser = tier_parlays(df, "Laser %", "Laser")
 parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else pd.DataFrame()
 
-# =========================
-# TABLE RENDER
-# =========================
 def color_grade(g):
     return {"A+":"#166534","A":"#15803d","A-":"#16a34a","B":"#2563eb","C":"#6d28d9","D":"#7f1d1d"}.get(g,"#374151")
 
@@ -571,13 +557,11 @@ def render(data):
     html += "</table></div>"
     return html
 
-# =========================
-# UI
-# =========================
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔥 Best", "📋 All Players", "🎯 Strikeouts", "🧾 Parlays", "🛠 Debug"])
 
 with tab1:
     st.subheader("Best AI Rated Plays")
+    st.caption(f"Active/upcoming games: {len(games)} | Finished games removed: {len(games_all) - len(games)} | Auto refresh: every 5 minutes")
     st.markdown(render(df.head(40)), unsafe_allow_html=True)
 
 with tab2:
@@ -604,10 +588,14 @@ with tab4:
     st.markdown(render(parlay_k), unsafe_allow_html=True)
 
 with tab5:
-    st.write("Games loaded:", len(games))
+    st.write("All games loaded:", len(games_all))
+    st.write("Active/upcoming games used:", len(games))
+    st.write("Finished games removed:", len(games_all) - len(games))
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
     st.write("Pitchers CSV rows:", len(pitchers))
     st.write("Detected batter recent column:", b_recent if b_recent else "None — using power/contact/laser fallback")
+    st.write("Game statuses:")
+    st.dataframe(pd.DataFrame(games_all)[["away", "home", "status"]] if games_all else pd.DataFrame(), use_container_width=True)
     st.write("Team counts:")
     st.dataframe(batters["_team"].value_counts(dropna=False).reset_index(), use_container_width=True)
