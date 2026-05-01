@@ -1,12 +1,12 @@
 import math
-import itertools
 import time
 from datetime import datetime
+
 import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="CJ MLB ELITE HR AI", layout="wide")
+st.set_page_config(page_title="CJ MLB AI - Savant CSV", layout="wide")
 
 REFRESH_SECONDS = 300
 if "last_refresh" not in st.session_state:
@@ -29,8 +29,8 @@ st.markdown("""
 
 st.markdown("""
 <div class='hero'>
-<h1>🔥 CJ MLB ELITE HR AI MODEL</h1>
-<p>HR Reliability Upgrades: pitch-type edge • handedness • wind direction • park factor • recent power form • lineup spot • K-risk penalty • live pitcher stats</p>
+<h1>🔥 CJ MLB AI Model</h1>
+<p>Built for Baseball Savant CSV • Dinger Score • HR • Hits • TB • RBI • Live Pitcher Stats • Auto Refresh • Tiered Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -79,6 +79,10 @@ def find_col(df, names):
     return None
 
 def make_name(df):
+    full_col = find_col(df, ["last_name, first_name", "last_name_first_name"])
+    if full_col:
+        return df[full_col].astype(str).apply(first_last)
+
     player_col = find_col(df, ["player_name", "name", "player"])
     if player_col:
         return df[player_col].astype(str).apply(first_last)
@@ -88,10 +92,6 @@ def make_name(df):
 
     if first_col and last_col:
         return (df[first_col].astype(str).str.strip() + " " + df[last_col].astype(str).str.strip()).str.strip()
-
-    full_col = find_col(df, ["last_name, first_name", "last_name_first_name"])
-    if full_col:
-        return df[full_col].astype(str).apply(first_last)
 
     st.error(f"Could not find player name columns. Found columns: {list(df.columns)}")
     st.stop()
@@ -147,12 +147,6 @@ def find_player(df, name):
     hits = df[df["_name"].apply(lambda x: player_match(x, name))]
     return hits.iloc[0] if not hits.empty else None
 
-def pct_value(row, col, default):
-    if not col:
-        return default
-    v = safe_float(row[col], default)
-    return v / 100 if v > 1 else v
-
 def fair_odds(p):
     if p <= 0 or p >= 1:
         return "N/A"
@@ -176,60 +170,56 @@ def badge_score(s):
     if s >= 15: return "🟡 Solid"
     return "⚪ Lean"
 
+def val_or_na(v, digits=2):
+    if v is None:
+        return "N/A"
+    try:
+        return round(float(v), digits)
+    except Exception:
+        return "N/A"
+
 # =========================
 # LOAD CSV
 # =========================
 try:
     batters = pd.read_csv("batters.csv")
-    pitchers = pd.read_csv("pitchers.csv")
 except Exception as e:
-    st.error(f"CSV load error: {e}")
+    st.error(f"batters.csv load error: {e}")
     st.stop()
 
 try:
-    parks = pd.read_csv("parks.csv")
+    pitchers = pd.read_csv("pitchers.csv")
 except Exception:
-    parks = pd.DataFrame()
+    pitchers = pd.DataFrame()
 
 batters["_name"] = make_name(batters)
-pitchers["_name"] = make_name(pitchers)
 
-# Batter columns
-b_xslg = find_col(batters, ["est_slg", "xslg", "slg"])
-b_xwoba = find_col(batters, ["est_woba", "xwoba", "woba"])
-b_xba = find_col(batters, ["est_ba", "xba", "ba"])
+if not pitchers.empty:
+    pitchers["_name"] = make_name(pitchers)
+
+# Savant-style columns
+b_pa = find_col(batters, ["pa"])
+b_bip = find_col(batters, ["bip"])
+b_ba = find_col(batters, ["ba"])
+b_est_ba = find_col(batters, ["est_ba", "xba"])
+b_slg = find_col(batters, ["slg"])
+b_est_slg = find_col(batters, ["est_slg", "xslg"])
+b_woba = find_col(batters, ["woba"])
+b_est_woba = find_col(batters, ["est_woba", "xwoba"])
+b_team = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
+
+# Optional future columns
 b_barrel = find_col(batters, ["barrel", "barrel_pct", "brl"])
 b_hard = find_col(batters, ["hard_hit", "hardhit", "hard_hit_pct"])
 b_k = find_col(batters, ["k_percent", "k%", "strikeout"])
-b_pa = find_col(batters, ["pa"])
 b_iso = find_col(batters, ["iso"])
-b_recent = find_col(batters, ["last7", "last14", "recent", "recent_form"])
-b_hand = find_col(batters, ["stand", "bats", "bat_side", "batter_hand", "hand"])
+b_recent = find_col(batters, ["last7", "last14", "recent", "recent_form", "last7_slg"])
+b_ab_since_hr = find_col(batters, ["ab_since_hr", "abs_since_hr", "pa_since_hr"])
 b_v_rhp = find_col(batters, ["xslg_vs_rhp", "slg_vs_rhp", "vs_rhp_slg", "rhp_slg"])
 b_v_lhp = find_col(batters, ["xslg_vs_lhp", "slg_vs_lhp", "vs_lhp_slg", "lhp_slg"])
-b_ab_since_hr = find_col(batters, ["ab_since_hr", "abs_since_hr", "pa_since_hr"])
-
-# Optional pitch-type columns
 b_fastball = find_col(batters, ["xslg_vs_fastball", "fastball_xslg", "xslg_fastball", "fb_xslg"])
 b_breaking = find_col(batters, ["xslg_vs_breaking", "breaking_xslg", "xslg_breaking", "brk_xslg"])
-b_offspeed = find_col(batters, ["xslg_vs_offspeed", "offspeed_xslg", "xslg_offspeed", "offspeed"])
-
-# Pitcher columns
-p_hand = find_col(pitchers, ["throws", "p_throws", "pitcher_hand", "hand"])
-p_hr9 = find_col(pitchers, ["hr_per_9", "hr9", "hr/9"])
-p_fb_pct = find_col(pitchers, ["fastball_pct", "fb_pct", "four_seam_pct", "fastball_usage"])
-p_brk_pct = find_col(pitchers, ["breaking_pct", "breaking_ball_pct", "brk_pct", "slider_pct", "curve_pct"])
-p_off_pct = find_col(pitchers, ["offspeed_pct", "changeup_pct", "splitter_pct"])
-
-# Park columns
-if not parks.empty:
-    park_col = find_col(parks, ["park_name", "venue_name", "park", "venue"])
-    park_hr_col = find_col(parks, ["hr_factor", "home_run", "hr"])
-    if park_col:
-        parks["_park"] = parks[park_col].astype(str).str.lower().str.strip()
-else:
-    park_col = None
-    park_hr_col = None
+b_offspeed = find_col(batters, ["xslg_vs_offspeed", "offspeed_xslg", "xslg_offspeed"])
 
 # =========================
 # MLB API
@@ -275,9 +265,8 @@ def get_lineups(game_pk):
         for idx, pid in enumerate(order, 1):
             p = players.get(f"ID{pid}", {})
             name = p.get("person", {}).get("fullName", "")
-            hand = p.get("batSide", {}).get("code", "")
             if name:
-                out.append({"name": name, "order": idx, "hand": hand})
+                out.append({"name": name, "order": idx})
         return out
 
     return {"away": side("away"), "home": side("home")}
@@ -297,6 +286,7 @@ def build_roster():
             roster = requests.get(f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster", timeout=20).json().get("roster", [])
         except Exception:
             roster = []
+
         for p in roster:
             name = p.get("person", {}).get("fullName", "")
             if name:
@@ -333,156 +323,85 @@ def pitcher_live(pid):
         return {"k_rate": .22, "k9": 8.0, "era": 4.20, "whip": 1.30, "hr9": 1.10}
 
 # =========================
-# WEATHER / PARK
-# =========================
-def park_city(park):
-    p = norm(park)
-    mapping = {
-        "yankee stadium": ("Bronx", "NY"),
-        "fenway park": ("Boston", "MA"),
-        "wrigley field": ("Chicago", "IL"),
-        "dodger stadium": ("Los Angeles", "CA"),
-        "coors field": ("Denver", "CO"),
-        "citizens bank park": ("Philadelphia", "PA"),
-        "great american ball park": ("Cincinnati", "OH"),
-        "oriole park at camden yards": ("Baltimore", "MD"),
-        "truist park": ("Atlanta", "GA"),
-        "citi field": ("Queens", "NY"),
-        "globe life field": ("Arlington", "TX"),
-        "oracle park": ("San Francisco", "CA"),
-        "petco park": ("San Diego", "CA"),
-        "pnc park": ("Pittsburgh", "PA"),
-        "nationals park": ("Washington", "DC"),
-        "target field": ("Minneapolis", "MN"),
-        "comerica park": ("Detroit", "MI"),
-        "busch stadium": ("St. Louis", "MO"),
-        "kauffman stadium": ("Kansas City", "MO"),
-        "t-mobile park": ("Seattle", "WA"),
-        "progressive field": ("Cleveland", "OH"),
-        "chase field": ("Phoenix", "AZ"),
-        "loandepot park": ("Miami", "FL"),
-        "minute maid park": ("Houston", "TX"),
-        "american family field": ("Milwaukee", "WI"),
-        "rogers centre": ("Toronto", "ON"),
-    }
-    return mapping.get(p, ("", ""))
-
-@st.cache_data(ttl=1800)
-def get_weather(city, state):
-    if not city:
-        return {"temp":70, "wind":7, "desc":"Unknown", "impact":"Neutral", "mult":1.0, "wind_dir":"N/A"}
-
-    try:
-        q = f"{city},{state}".replace(" ", "%20")
-        data = requests.get(f"https://wttr.in/{q}?format=j1", timeout=15).json()
-        cur = data["current_condition"][0]
-        temp = safe_float(cur.get("temp_F"), 70)
-        wind = safe_float(cur.get("windspeedMiles"), 7)
-        desc = cur.get("weatherDesc", [{}])[0].get("value", "Clear")
-        wind_dir = cur.get("winddir16Point", "N/A")
-    except Exception:
-        temp, wind, desc, wind_dir = 70, 7, "Unknown", "N/A"
-
-    raw = 1.0 + ((temp - 70) * .004) + (wind * .003)
-
-    if "rain" in desc.lower() or "storm" in desc.lower():
-        raw -= .06
-
-    # Without ballpark orientation data, this is a conservative directional estimate.
-    # Out/in can be customized later by ballpark.
-    if wind >= 10:
-        if wind_dir in ["S", "SE", "SW", "W"]:
-            raw += .04
-        elif wind_dir in ["N", "NE", "NW", "E"]:
-            raw -= .03
-
-    mult = clamp(raw, .88, 1.18)
-    impact = "Good" if mult >= 1.04 else "Bad" if mult <= .97 else "Neutral"
-    return {"temp":temp, "wind":wind, "desc":desc, "impact":impact, "mult":mult, "wind_dir":wind_dir}
-
-def park_hr_factor(park):
-    if parks.empty or not park_col or not park_hr_col:
-        return 1.0
-    r = parks[parks["_park"] == str(park).lower().strip()]
-    if r.empty:
-        return 1.0
-    v = safe_float(r.iloc[0][park_hr_col], 1.0)
-    return v / 100 if v > 3 else v
-
-# =========================
-# DATA SETUP
+# TEAM MAP
 # =========================
 games_all = get_schedule()
 FINAL_STATUSES = ["final", "game over", "completed early"]
 games = [g for g in games_all if str(g.get("status", "")).lower() not in FINAL_STATUSES]
 
 roster = build_roster()
-team_col = find_col(batters, ["team", "player_team", "bat_team", "batter_team", "team_name", "club", "team_abbrev", "team_abbr"])
-if team_col:
-    batters["_team"] = batters[team_col].astype(str).apply(normalize_team)
+
+if b_team:
+    batters["_team"] = batters[b_team].astype(str).apply(normalize_team)
 else:
     lookup = dict(zip(roster["_norm"], roster["team"])) if not roster.empty else {}
     batters["_team"] = batters["_name"].apply(lambda x: lookup.get(norm(x), ""))
 
 # =========================
-# HR MODEL
+# MODEL
 # =========================
-def batter_metrics(row, pitcher_hand=None):
-    xslg = safe_float(row[b_xslg], .390) if b_xslg else .390
-    xwoba = safe_float(row[b_xwoba], .310) if b_xwoba else .310
-    xba = safe_float(row[b_xba], .245) if b_xba else .245
-    barrel = pct_value(row, b_barrel, .08)
-    hard = pct_value(row, b_hard, .38)
-    k_rate = pct_value(row, b_k, .22)
+def batter_metrics(row):
     pa = safe_float(row[b_pa], 250) if b_pa else 250
-    iso = safe_float(row[b_iso], .170) if b_iso else .170
+    bip = safe_float(row[b_bip], 150) if b_bip else 150
 
-    # Handedness split boost if columns exist
-    split_slg = None
-    if pitcher_hand:
-        ph = str(pitcher_hand).upper()[0]
-        if ph == "R" and b_v_rhp:
-            split_slg = safe_float(row[b_v_rhp], xslg)
-        elif ph == "L" and b_v_lhp:
-            split_slg = safe_float(row[b_v_lhp], xslg)
+    ba = safe_float(row[b_ba], .245) if b_ba else .245
+    est_ba = safe_float(row[b_est_ba], ba) if b_est_ba else ba
 
-    hand_edge = scale01(split_slg if split_slg is not None else xslg, .300, .750)
+    slg = safe_float(row[b_slg], .400) if b_slg else .400
+    est_slg = safe_float(row[b_est_slg], slg) if b_est_slg else slg
 
+    woba = safe_float(row[b_woba], .310) if b_woba else .310
+    est_woba = safe_float(row[b_est_woba], woba) if b_est_woba else woba
+
+    barrel = safe_float(row[b_barrel], None) if b_barrel else None
+    hard = safe_float(row[b_hard], None) if b_hard else None
+    k_rate = safe_float(row[b_k], None) if b_k else None
+    iso = safe_float(row[b_iso], est_slg - est_ba) if b_iso else est_slg - est_ba
+
+    if barrel is not None and barrel > 1:
+        barrel /= 100
+    if hard is not None and hard > 1:
+        hard /= 100
+    if k_rate is not None and k_rate > 1:
+        k_rate /= 100
+
+    # Core Savant power engine
     power = clamp(
-        .27*scale01(xslg,.300,.750)
-        + .20*scale01(barrel,.02,.25)
-        + .17*scale01(hard,.20,.65)
-        + .14*scale01(iso,.080,.350)
-        + .10*scale01(xwoba,.250,.460)
-        + .07*hand_edge
-        + .05*scale01(pa,50,650),
-        0,1
+        .42 * scale01(est_slg, .300, .700)
+        + .28 * scale01(est_woba, .250, .450)
+        + .18 * scale01(iso, .080, .350)
+        + .12 * scale01(pa, 50, 650),
+        0, 1
     )
 
     contact = clamp(
-        .40*scale01(xba,.190,.330)
-        + .30*scale01(xwoba,.250,.460)
-        + .20*(1-scale01(k_rate,.12,.34))
-        + .10*scale01(hard,.20,.65),
-        0,1
+        .50 * scale01(est_ba, .190, .330)
+        + .35 * scale01(est_woba, .250, .450)
+        + .15 * scale01(bip, 40, 500),
+        0, 1
     )
+
+    # Optional boost if future columns exist
+    if barrel is not None:
+        power = clamp(power * .82 + scale01(barrel, .02, .22) * .18, 0, 1)
+    if hard is not None:
+        power = clamp(power * .88 + scale01(hard, .25, .60) * .12, 0, 1)
 
     laser = clamp(
-        .50*scale01(hard,.20,.65)
-        + .30*scale01(barrel,.02,.25)
-        + .20*scale01(xslg,.300,.750),
-        0,1
+        .55 * scale01(est_slg, .300, .700)
+        + .30 * scale01(est_woba, .250, .450)
+        + .15 * (scale01(hard, .25, .60) if hard is not None else .50),
+        0, 1
     )
 
-    # Better recent form: if missing, do not call everyone slump.
     if b_recent:
         recent_raw = safe_float(row[b_recent], None)
         if recent_raw is None or recent_raw == 0:
-            form_score = power*.55 + contact*.25 + laser*.20
+            form_score = power * .55 + contact * .25 + laser * .20
         else:
             form_score = scale01(recent_raw, .180, .360)
     else:
-        form_score = power*.55 + contact*.25 + laser*.20
+        form_score = power * .55 + contact * .25 + laser * .20
 
     if form_score >= .70 or power >= .78 or laser >= .78:
         form = "🔥 Hot"
@@ -493,8 +412,10 @@ def batter_metrics(row, pitcher_hand=None):
     else:
         form = "❄️ Cold"
 
-    ab_since = safe_float(row[b_ab_since_hr], 20) if b_ab_since_hr else 20
-    ab_since_score = clamp(1 - scale01(ab_since, 0, 45), 0, 1)
+    k_penalty = scale01(k_rate, .18, .35) if k_rate is not None else None
+
+    ab_since = safe_float(row[b_ab_since_hr], None) if b_ab_since_hr else None
+    ab_since_score = 1 - scale01(ab_since, 0, 45) if ab_since is not None else None
 
     return {
         "power": power,
@@ -502,113 +423,110 @@ def batter_metrics(row, pitcher_hand=None):
         "laser": laser,
         "form_score": form_score,
         "form": form,
-        "k_rate": k_rate,
-        "hand_edge": hand_edge,
+        "k_penalty": k_penalty,
         "ab_since_hr": ab_since,
-        "ab_since_score": ab_since_score
+        "ab_since_score": ab_since_score,
+        "est_slg": est_slg,
+        "est_woba": est_woba,
+        "est_ba": est_ba,
+        "iso": iso,
     }
 
-def pitcher_vuln_from_live(live):
+def pitcher_vuln(live):
     return clamp(
-        .45*scale01(live.get("hr9",1.1),.3,2.2)
-        + .30*scale01(live.get("era",4.2),2.5,6.0)
-        + .25*scale01(live.get("whip",1.3),.9,1.7),
-        0,1
+        .45 * scale01(live.get("hr9", 1.1), .3, 2.2)
+        + .30 * scale01(live.get("era", 4.2), 2.5, 6.0)
+        + .25 * scale01(live.get("whip", 1.3), .9, 1.7),
+        0, 1
     )
 
-def pitcher_hand_value(pitcher_name):
-    p = find_player(pitchers, pitcher_name)
-    if p is None or not p_hand:
+def pitch_type_edge(row):
+    # Honest behavior: only use if columns exist; otherwise show N/A and use neutral in score.
+    vals = []
+    if b_fastball:
+        vals.append(safe_float(row[b_fastball], .400))
+    if b_breaking:
+        vals.append(safe_float(row[b_breaking], .380))
+    if b_offspeed:
+        vals.append(safe_float(row[b_offspeed], .360))
+
+    if not vals:
         return None
-    val = str(p[p_hand]).upper().strip()
-    return val[0] if val else None
 
-def pitch_type_edge(row, pitcher_name):
-    p = find_player(pitchers, pitcher_name)
-    if p is None:
-        return 0.5
+    avg = sum(vals) / len(vals)
+    return scale01(avg, .280, .650)
 
-    fb_usage = pct_value(p, p_fb_pct, .45)
-    brk_usage = pct_value(p, p_brk_pct, .35)
-    off_usage = pct_value(p, p_off_pct, .20)
+def split_edge(row):
+    vals = []
+    if b_v_rhp:
+        vals.append(safe_float(row[b_v_rhp], None))
+    if b_v_lhp:
+        vals.append(safe_float(row[b_v_lhp], None))
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return scale01(sum(vals) / len(vals), .300, .700)
 
-    fb_perf = safe_float(row[b_fastball], .420) if b_fastball else .420
-    brk_perf = safe_float(row[b_breaking], .380) if b_breaking else .380
-    off_perf = safe_float(row[b_offspeed], .360) if b_offspeed else .360
-
-    weighted = (fb_usage * fb_perf) + (brk_usage * brk_perf) + (off_usage * off_perf)
-    return scale01(weighted, .280, .650)
-
-def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, park, weather, order="—", lineup="Projected"):
+def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, order="—", lineup="Projected"):
     b = find_player(batters, batter_name)
     if b is None:
         return None
 
     live = pitcher_live(pitcher_id)
-    p_hand_val = pitcher_hand_value(pitcher_name)
-    bm = batter_metrics(b, p_hand_val)
-    pv = pitcher_vuln_from_live(live)
-    pitch_edge = pitch_type_edge(b, pitcher_name)
-    park_edge = scale01(park_hr_factor(park), .80, 1.30)
-    weather_edge = scale01(weather.get("mult", 1.0), .90, 1.18)
-    lineup_edge = 1 - scale01(order if isinstance(order, int) else 5, 1, 9)
-    k_penalty = scale01(bm["k_rate"], .18, .35)
+    bm = batter_metrics(b)
+    pv = pitcher_vuln(live)
 
-    total_edge = clamp(
-        bm["power"]*.28
-        + bm["laser"]*.16
-        + pv*.18
-        + pitch_edge*.14
-        + park_edge*.10
-        + weather_edge*.08
-        + bm["form_score"]*.06,
-        0, 1
-    )
+    pitch_edge = pitch_type_edge(b)
+    hand_edge = split_edge(b)
+
+    lineup_edge = 1 - scale01(order, 1, 9) if isinstance(order, int) else None
+
+    pitch_edge_for_score = pitch_edge if pitch_edge is not None else .50
+    hand_edge_for_score = hand_edge if hand_edge is not None else .50
+    lineup_edge_for_score = lineup_edge if lineup_edge is not None else .50
+    k_penalty_for_score = bm["k_penalty"] if bm["k_penalty"] is not None else .35
+    ab_score_for_score = bm["ab_since_score"] if bm["ab_since_score"] is not None else .50
 
     d_score = round(clamp(
-        10*bm["power"]
-        + 6*pv
-        + 5*pitch_edge
-        + 4*bm["contact"]
-        + 3*bm["form_score"]
-        + 3*park_edge
-        + 3*weather_edge
-        + 2*bm["hand_edge"]
-        + 2*lineup_edge
-        + 1.5*bm["ab_since_score"]
-        - 3*k_penalty,
+        12 * bm["power"]
+        + 6 * pv
+        + 4 * bm["contact"]
+        + 4 * bm["laser"]
+        + 3 * bm["form_score"]
+        + 3 * pitch_edge_for_score
+        + 2 * hand_edge_for_score
+        + 2 * lineup_edge_for_score
+        + 1.5 * ab_score_for_score
+        - 2.5 * k_penalty_for_score,
         0, 42
     ), 1)
 
     hr_prob = clamp(
         .035 + (
-            .28*bm["power"]
-            + .20*pv
-            + .16*pitch_edge
-            + .12*bm["laser"]
-            + .10*park_edge
-            + .08*weather_edge
-            + .06*bm["form_score"]
-            + .04*lineup_edge
-            - .04*k_penalty
+            .34 * bm["power"]
+            + .20 * pv
+            + .16 * bm["laser"]
+            + .10 * bm["form_score"]
+            + .08 * pitch_edge_for_score
+            + .06 * hand_edge_for_score
+            + .04 * lineup_edge_for_score
+            - .04 * k_penalty_for_score
         ) * .32,
         .010,
         .38
     )
 
-    hit_prob = clamp(.28 + (.55*bm["contact"] + .20*(1-pv) + .15*bm["form_score"] + .10*lineup_edge) * .42, .18, .82)
-    tb_prob = clamp(.20 + (.42*bm["power"] + .25*bm["contact"] + .23*pv + .10*park_edge) * .48, .10, .76)
-    rbi_prob = clamp(.12 + (.45*bm["power"] + .25*pv + .20*lineup_edge + .10*park_edge) * .42, .06, .62)
-    laser_prob = clamp(.15 + bm["laser"]*.58 + pv*.12 + pitch_edge*.10, .10, .82)
+    hit_prob = clamp(.28 + (.55 * bm["contact"] + .25 * bm["form_score"] + .20 * (1 - pv)) * .42, .18, .82)
+    tb_prob = clamp(.20 + (.45 * bm["power"] + .30 * bm["contact"] + .25 * pv) * .48, .10, .76)
+    rbi_prob = clamp(.12 + (.45 * bm["power"] + .30 * pv + .25 * lineup_edge_for_score) * .42, .06, .62)
+    laser_prob = clamp(.15 + bm["laser"] * .62 + pv * .10, .10, .82)
 
     reasons = (
-        f"{bm['form']} • Power {round(bm['power'],2)} • Contact {round(bm['contact'],2)} "
-        f"• Laser {round(bm['laser'],2)} • Pitcher HR risk {round(pv,2)} "
-        f"• Pitch-type edge {round(pitch_edge,2)} • Hand edge {round(bm['hand_edge'],2)} "
-        f"• Park edge {round(park_edge,2)} • Weather {weather.get('impact')} "
-        f"{weather.get('temp')}°F wind {weather.get('wind')} mph {weather.get('wind_dir')} "
-        f"• Lineup edge {round(lineup_edge,2)} • K risk {round(k_penalty,2)} "
-        f"• AB since HR {round(bm['ab_since_hr'],0)}"
+        f"{bm['form']} • estSLG {round(bm['est_slg'],3)} • estwOBA {round(bm['est_woba'],3)} "
+        f"• estBA {round(bm['est_ba'],3)} • ISO {round(bm['iso'],3)} "
+        f"• Pitcher risk {round(pv,2)} • Pitch edge {val_or_na(pitch_edge)} "
+        f"• Split edge {val_or_na(hand_edge)} • Lineup edge {val_or_na(lineup_edge)} "
+        f"• K risk {val_or_na(bm['k_penalty'])} • AB since HR {val_or_na(bm['ab_since_hr'],0)}"
     )
 
     return {
@@ -622,19 +540,21 @@ def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, park
         "Dinger Score": d_score,
         "Dinger Badge": badge_score(d_score),
         "Grade": grade_score(d_score),
-        "HR %": round(hr_prob*100,1),
-        "Hit %": round(hit_prob*100,1),
-        "TB %": round(tb_prob*100,1),
-        "RBI %": round(rbi_prob*100,1),
-        "Laser %": round(laser_prob*100,1),
+        "HR %": round(hr_prob * 100, 1),
+        "Hit %": round(hit_prob * 100, 1),
+        "TB %": round(tb_prob * 100, 1),
+        "RBI %": round(rbi_prob * 100, 1),
+        "Laser %": round(laser_prob * 100, 1),
         "Form": bm["form"],
         "HR Fair Odds": fair_odds(hr_prob),
-        "Total Edge": round(total_edge,2),
-        "Pitch-Type Edge": round(pitch_edge,2),
-        "Park Edge": round(park_edge,2),
-        "Weather Edge": round(weather_edge,2),
-        "Hand Edge": round(bm["hand_edge"],2),
-        "K Risk": round(k_penalty,2),
+        "Power": round(bm["power"], 2),
+        "Contact": round(bm["contact"], 2),
+        "Pitcher Risk": round(pv, 2),
+        "Pitch Edge": val_or_na(pitch_edge),
+        "Split Edge": val_or_na(hand_edge),
+        "Lineup Edge": val_or_na(lineup_edge),
+        "K Risk": val_or_na(bm["k_penalty"]),
+        "AB Since HR": val_or_na(bm["ab_since_hr"], 0),
         "Reasons": reasons,
     }
 
@@ -642,80 +562,81 @@ def score_player(batter_name, pitcher_name, pitcher_id, team, opp, matchup, park
 # BUILD ROWS
 # =========================
 rows = []
+
 for g in games:
     matchup = f'{g["away"]} @ {g["home"]}'
-    city, state = park_city(g["park"])
-    weather = get_weather(city, state)
     lu = get_lineups(g["gamePk"])
 
     if g["home_p"]:
         hitters = lu["away"]
         if hitters:
             for h in hitters:
-                r = score_player(h["name"], g["home_p"], g["home_p_id"], g["away"], g["home"], matchup, g["park"], weather, h["order"], "Final")
+                r = score_player(h["name"], g["home_p"], g["home_p_id"], g["away"], g["home"], matchup, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _, b in batters[batters["_team"] == normalize_team(g["away"])].iterrows():
-                r = score_player(b["_name"], g["home_p"], g["home_p_id"], g["away"], g["home"], matchup, g["park"], weather)
+                r = score_player(b["_name"], g["home_p"], g["home_p_id"], g["away"], g["home"], matchup)
                 if r: rows.append(r)
 
     if g["away_p"]:
         hitters = lu["home"]
         if hitters:
             for h in hitters:
-                r = score_player(h["name"], g["away_p"], g["away_p_id"], g["home"], g["away"], matchup, g["park"], weather, h["order"], "Final")
+                r = score_player(h["name"], g["away_p"], g["away_p_id"], g["home"], g["away"], matchup, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _, b in batters[batters["_team"] == normalize_team(g["home"])].iterrows():
-                r = score_player(b["_name"], g["away_p"], g["away_p_id"], g["home"], g["away"], matchup, g["park"], weather)
+                r = score_player(b["_name"], g["away_p"], g["away_p_id"], g["home"], g["away"], matchup)
                 if r: rows.append(r)
 
 df = pd.DataFrame(rows)
+
 if df.empty:
-    st.warning("No active/upcoming player rows created. All games may be final, or probable pitchers/lineups are missing.")
+    st.warning("No active/upcoming rows created. All games may be final, lineups may be missing, or teams did not map.")
     st.stop()
 
 df = df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
 # =========================
-# STRIKEOUT MODEL
+# STRIKEOUTS
 # =========================
 k_rows = []
 for g in games:
     for name, pid, opp in [(g["away_p"], g["away_p_id"], g["home"]), (g["home_p"], g["home_p_id"], g["away"])]:
         if not name:
             continue
+
         live = pitcher_live(pid)
-        proj_ks = clamp(3.8 + (live["k_rate"]-.20)*18 + (live["k9"]-8.0)*0.35, 2.0, 10.5)
+        proj_ks = clamp(3.8 + (live["k_rate"] - .20) * 18 + (live["k9"] - 8.0) * .35, 2.0, 10.5)
 
         def over_prob(line):
-            return clamp(1 / (1 + math.exp(-(proj_ks-line))), .05, .92)
+            return clamp(1 / (1 + math.exp(-(proj_ks - line))), .05, .92)
 
-        k45 = round(over_prob(4.5)*100,1)
-        k55 = round(over_prob(5.5)*100,1)
-        k65 = round(over_prob(6.5)*100,1)
-        best = max(k45,k55,k65)
+        k45 = round(over_prob(4.5) * 100, 1)
+        k55 = round(over_prob(5.5) * 100, 1)
+        k65 = round(over_prob(6.5) * 100, 1)
+        best = max(k45, k55, k65)
 
         k_rows.append({
             "Pitcher": name,
             "Opponent": normalize_team(opp),
-            "Projected Ks": round(proj_ks,1),
-            "Live K%": round(live["k_rate"]*100,1),
-            "K/9": round(live["k9"],1),
+            "Projected Ks": round(proj_ks, 1),
+            "Live K%": round(live["k_rate"] * 100, 1),
+            "K/9": round(live["k9"], 1),
             "ERA": live["era"],
             "WHIP": live["whip"],
             "Over 4.5 K%": k45,
             "Over 5.5 K%": k55,
             "Over 6.5 K%": k65,
             "Best K%": best,
-            "Grade": "A+" if best>=75 else "A" if best>=65 else "A-" if best>=58 else "B" if best>=50 else "C",
-            "Pick Explanation": f"{name} projects for {round(proj_ks,1)} Ks using live K%, K/9, ERA and WHIP."
+            "Grade": "A+" if best >= 75 else "A" if best >= 65 else "A-" if best >= 58 else "B" if best >= 50 else "C",
+            "Pick Explanation": f"{name} projects for {round(proj_ks,1)} Ks using live K%, K/9, ERA, and WHIP."
         })
 
 k_df = pd.DataFrame(k_rows).sort_values("Best K%", ascending=False) if k_rows else pd.DataFrame()
 
 # =========================
-# TIERED PARLAYS
+# PARLAYS
 # =========================
 def tier_parlays(data, col, label, name_col="Player"):
     pool = data.sort_values(col, ascending=False).head(15).reset_index(drop=True)
@@ -729,9 +650,9 @@ def tier_parlays(data, col, label, name_col="Player"):
             "Leg 1": f"{c.iloc[0][name_col]} ({c.iloc[0][col]}%)",
             "Leg 2": f"{c.iloc[1][name_col]} ({c.iloc[1][col]}%)",
             "Leg 3": f"{c.iloc[2][name_col]} ({c.iloc[2][col]}%)",
-            "Avg Model %": round(c[col].mean(),1),
-            "Model Combo Confidence": round((c[col]/100).prod()*100,2),
-            "Notes": "Tier-based no-overlap parlay"
+            "Avg Model %": round(c[col].mean(), 1),
+            "Model Combo Confidence": round((c[col] / 100).prod() * 100, 2),
+            "Notes": f"Tier #{len(out)+1}: ranked group {i+1}-{i+3}, no repeated top-player overlap"
         })
     return pd.DataFrame(out)
 
@@ -743,24 +664,27 @@ parlay_laser = tier_parlays(df, "Laser %", "Laser")
 parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else pd.DataFrame()
 
 # =========================
-# UI TABLE
+# RENDER
 # =========================
 def color_grade(g):
-    return {"A+":"#166534","A":"#15803d","A-":"#16a34a","B":"#2563eb","C":"#6d28d9","D":"#7f1d1d"}.get(g,"#374151")
+    return {"A+":"#166534","A":"#15803d","A-":"#16a34a","B":"#2563eb","C":"#6d28d9","D":"#7f1d1d"}.get(g, "#374151")
 
 def render(data):
     if data is None or data.empty:
         return "<div class='note'>No data available.</div>"
+
     cols = list(data.columns)
     html = "<div class='table-wrap'><table class='ai-table'><tr>"
     for c in cols:
         html += f"<th>{c}</th>"
     html += "</tr>"
+
     for _, r in data.iterrows():
         html += "<tr>"
         for c in cols:
             v = r.get(c, "")
             style = ""
+
             if c == "Grade":
                 style = f"background:{color_grade(v)};font-weight:900;text-align:center;"
             elif c == "Dinger Score":
@@ -779,11 +703,16 @@ def render(data):
                     style = "color:#fca5a5;font-weight:900;"
             elif c in ["Reasons", "Pick Explanation", "Notes"]:
                 style = "white-space:normal;min-width:520px;color:#cbd5e1;"
+
             html += f"<td style='{style}'>{v}</td>"
         html += "</tr>"
+
     html += "</table></div>"
     return html
 
+# =========================
+# UI
+# =========================
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔥 Best HR Plays", "📋 All Players", "🎯 Strikeouts", "🧾 Parlays", "🛠 Debug"])
 
 with tab1:
@@ -820,12 +749,27 @@ with tab5:
     st.write("Finished games removed:", len(games_all) - len(games))
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
-    st.write("Pitchers CSV rows:", len(pitchers))
-    st.write("Detected park file:", "Yes" if not parks.empty else "No")
-    st.write("Detected batter recent column:", b_recent if b_recent else "None — using power/contact/laser fallback")
-    st.write("Detected handedness columns:", {"batter": b_hand, "pitcher": p_hand})
-    st.write("Detected pitch-type batter columns:", {"fastball": b_fastball, "breaking": b_breaking, "offspeed": b_offspeed})
-    st.write("Detected pitcher pitch usage columns:", {"fastball": p_fb_pct, "breaking": p_brk_pct, "offspeed": p_off_pct})
+    st.write("Batters columns detected:")
+    st.json({
+        "name": "last_name, first_name / player_name",
+        "pa": b_pa,
+        "bip": b_bip,
+        "ba": b_ba,
+        "est_ba": b_est_ba,
+        "slg": b_slg,
+        "est_slg": b_est_slg,
+        "woba": b_woba,
+        "est_woba": b_est_woba,
+        "team": b_team,
+        "optional_barrel": b_barrel,
+        "optional_hard_hit": b_hard,
+        "optional_recent": b_recent,
+        "optional_pitch_type": {
+            "fastball": b_fastball,
+            "breaking": b_breaking,
+            "offspeed": b_offspeed
+        }
+    })
     st.write("Game statuses:")
     st.dataframe(pd.DataFrame(games_all)[["away", "home", "status"]] if games_all else pd.DataFrame(), use_container_width=True)
     st.write("Team counts:")
