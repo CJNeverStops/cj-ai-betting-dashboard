@@ -1,5 +1,4 @@
 import math, time
-from datetime import datetime
 import pandas as pd
 import requests
 import streamlit as st
@@ -28,7 +27,7 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Calibrated Dinger Score • HR Projections • Team Auto-Mapping • Tiered Parlays • Auto Refresh</p>
+<p>Calibrated HR Model • Team Auto-Mapping • Smart HR Parlays • Tiered Props • Auto Refresh</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -173,7 +172,6 @@ except Exception as e:
     st.stop()
 
 batters["_name"] = make_name(batters)
-
 roster = build_roster()
 
 b_team = find_col(batters, ["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
@@ -291,6 +289,7 @@ for _, r in batters.iterrows():
     rows.append({
         "Player": r["_name"],
         "Team": r["_team"],
+        "Matchup": "N/A",
         "Dinger Score": s,
         "Grade": grade_score(s),
         "Badge": badge_score(s),
@@ -329,7 +328,70 @@ def tier_parlays(data, col, label):
         })
     return pd.DataFrame(out)
 
-parlay_hr = tier_parlays(df,"HR %","HR")
+def smart_hr_parlays(data):
+    pool = data.sort_values("Dinger Score", ascending=False).head(40).reset_index(drop=True)
+
+    elite = pool[pool["Grade"].isin(["S+", "S"])]
+    strong = pool[pool["Grade"].isin(["A+", "A"])]
+    value = pool[pool["Grade"].isin(["B", "C"])]
+
+    parlays = []
+    used_players = set()
+
+    for i in range(5):
+        legs = []
+
+        for group in [elite, strong, value]:
+            for _, r in group.iterrows():
+                player = r["Player"]
+                matchup = r.get("Matchup", "")
+
+                if player in used_players:
+                    continue
+
+                if matchup != "N/A" and any(l.get("Matchup", "") == matchup for l in legs):
+                    continue
+
+                legs.append(r)
+                used_players.add(player)
+                break
+
+        if len(legs) < 3:
+            remaining = pool[~pool["Player"].isin(used_players)]
+            for _, r in remaining.iterrows():
+                if len(legs) >= 3:
+                    break
+
+                matchup = r.get("Matchup", "")
+                if matchup != "N/A" and any(l.get("Matchup", "") == matchup for l in legs):
+                    continue
+
+                legs.append(r)
+                used_players.add(r["Player"])
+
+        if len(legs) == 3:
+            avg_hr = round(sum([safe_float(l["HR %"]) for l in legs]) / 3, 1)
+            combo_conf = round(
+                (safe_float(legs[0]["HR %"]) / 100)
+                * (safe_float(legs[1]["HR %"]) / 100)
+                * (safe_float(legs[2]["HR %"]) / 100)
+                * 100,
+                2
+            )
+
+            parlays.append({
+                "Parlay": f"Smart HR 3-Leg #{i+1}",
+                "Leg 1 Anchor": f"{legs[0]['Player']} | {legs[0]['Grade']} | {legs[0]['HR %']}%",
+                "Leg 2 Support": f"{legs[1]['Player']} | {legs[1]['Grade']} | {legs[1]['HR %']}%",
+                "Leg 3 Value": f"{legs[2]['Player']} | {legs[2]['Grade']} | {legs[2]['HR %']}%",
+                "Avg HR %": avg_hr,
+                "Model Combo Confidence": combo_conf,
+                "Strategy": "1 elite/anchor + 1 strong support + 1 value leg, no repeated players"
+            })
+
+    return pd.DataFrame(parlays)
+
+parlay_hr = smart_hr_parlays(df)
 parlay_hit = tier_parlays(df,"Hit %","Hit")
 parlay_tb = tier_parlays(df,"TB %","TB")
 parlay_rbi = tier_parlays(df,"RBI %","RBI")
@@ -354,13 +416,15 @@ def render(data):
                 style=f"background:{color_grade(v)};font-weight:900;text-align:center;"
             elif c=="Dinger Score":
                 style="background:rgba(34,197,94,.38);font-weight:900;" if safe_float(v)>=28 else "background:rgba(59,130,246,.28);font-weight:900;" if safe_float(v)>=24 else "background:rgba(234,179,8,.22);font-weight:900;"
-            elif "%" in c or c in ["Avg Model %","Model Combo Confidence"]:
+            elif "%" in c or c in ["Avg Model %","Model Combo Confidence","Avg HR %"]:
                 style="background:rgba(34,197,94,.25);" if safe_float(v)>=60 else "background:rgba(234,179,8,.18);" if safe_float(v)>=35 else "background:rgba(239,68,68,.15);"
             elif c=="Form":
                 val=str(v)
                 style="color:#86efac;font-weight:900;" if "Hot" in val else "color:#93c5fd;font-weight:900;" if "Good" in val else "color:#fde68a;font-weight:900;" if "Neutral" in val else "color:#fca5a5;font-weight:900;"
-            elif c in ["Reasons","Notes"]:
+            elif c in ["Reasons","Notes","Strategy"]:
                 style="white-space:normal;min-width:520px;color:#cbd5e1;"
+            elif c in ["Leg 1 Anchor","Leg 2 Support","Leg 3 Value","Leg 1","Leg 2","Leg 3"]:
+                style="font-weight:800;color:#e5e7eb;"
             html+=f"<td style='{style}'>{v}</td>"
         html+="</tr>"
 
@@ -378,8 +442,8 @@ with tab2:
     st.markdown(render(df), unsafe_allow_html=True)
 
 with tab3:
-    st.subheader("🧾 Top 5 Tiered 3-Leg Parlays")
-    st.markdown("### 💣 HR Parlays")
+    st.subheader("🧾 Top Parlays")
+    st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
