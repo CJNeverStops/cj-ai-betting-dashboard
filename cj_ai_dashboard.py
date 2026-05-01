@@ -16,12 +16,7 @@ if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
 st.markdown("""
 <style>
 .stApp { background:#050914; color:white; }
-.hero {
-    background:linear-gradient(135deg,#3b171b,#111827);
-    padding:24px;
-    border-radius:22px;
-    margin-bottom:20px;
-}
+.hero { background:linear-gradient(135deg,#3b171b,#111827); padding:24px; border-radius:22px; margin-bottom:20px; }
 .table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:18px; margin-bottom:22px; }
 .ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:14px; }
 .ai-table th { background:#111827; padding:11px; text-align:left; white-space:nowrap; }
@@ -33,7 +28,7 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Calibrated Dinger Score • HR Projections • Weather • Park Factors • Pitcher Risk • Tiered Parlays • Auto Refresh</p>
+<p>Calibrated Dinger Score • HR Projections • Team Auto-Mapping • Tiered Parlays • Auto Refresh</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -83,6 +78,42 @@ def make_name(df):
     st.error(f"Could not find player name column. Found: {list(df.columns)}")
     st.stop()
 
+def normalize_team(t):
+    t = norm(t)
+    m = {
+        "arizona diamondbacks":"ARI","diamondbacks":"ARI","ari":"ARI",
+        "atlanta braves":"ATL","braves":"ATL","atl":"ATL",
+        "baltimore orioles":"BAL","orioles":"BAL","bal":"BAL",
+        "boston red sox":"BOS","red sox":"BOS","bos":"BOS",
+        "chicago cubs":"CHC","cubs":"CHC","chc":"CHC",
+        "chicago white sox":"CWS","white sox":"CWS","cws":"CWS",
+        "cincinnati reds":"CIN","reds":"CIN","cin":"CIN",
+        "cleveland guardians":"CLE","guardians":"CLE","cle":"CLE",
+        "colorado rockies":"COL","rockies":"COL","col":"COL",
+        "detroit tigers":"DET","tigers":"DET","det":"DET",
+        "houston astros":"HOU","astros":"HOU","hou":"HOU",
+        "kansas city royals":"KC","royals":"KC","kc":"KC",
+        "los angeles angels":"LAA","angels":"LAA","laa":"LAA",
+        "los angeles dodgers":"LAD","dodgers":"LAD","lad":"LAD",
+        "miami marlins":"MIA","marlins":"MIA","mia":"MIA",
+        "milwaukee brewers":"MIL","brewers":"MIL","mil":"MIL",
+        "minnesota twins":"MIN","twins":"MIN","min":"MIN",
+        "new york mets":"NYM","mets":"NYM","nym":"NYM",
+        "new york yankees":"NYY","yankees":"NYY","nyy":"NYY",
+        "oakland athletics":"OAK","athletics":"OAK","oak":"OAK",
+        "philadelphia phillies":"PHI","phillies":"PHI","phi":"PHI",
+        "pittsburgh pirates":"PIT","pirates":"PIT","pit":"PIT",
+        "san diego padres":"SD","padres":"SD","sd":"SD",
+        "san francisco giants":"SF","giants":"SF","sf":"SF",
+        "seattle mariners":"SEA","mariners":"SEA","sea":"SEA",
+        "st louis cardinals":"STL","st. louis cardinals":"STL","cardinals":"STL","stl":"STL",
+        "tampa bay rays":"TB","rays":"TB","tb":"TB",
+        "texas rangers":"TEX","rangers":"TEX","tex":"TEX",
+        "toronto blue jays":"TOR","blue jays":"TOR","tor":"TOR",
+        "washington nationals":"WSH","nationals":"WSH","wsh":"WSH",
+    }
+    return m.get(t, str(t).upper()[:3])
+
 def grade_score(s):
     if s >= 36: return "S+"
     if s >= 32: return "S"
@@ -112,6 +143,29 @@ def color_grade(g):
         "D":"#374151"
     }.get(g,"#374151")
 
+@st.cache_data(ttl=86400)
+def build_roster():
+    out = []
+    try:
+        teams = requests.get("https://statsapi.mlb.com/api/v1/teams?sportId=1", timeout=20).json().get("teams", [])
+    except Exception:
+        return pd.DataFrame(columns=["name", "team", "_norm"])
+
+    for t in teams:
+        team = normalize_team(t.get("name", ""))
+        tid = t.get("id")
+        try:
+            roster = requests.get(f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster", timeout=20).json().get("roster", [])
+        except Exception:
+            roster = []
+
+        for p in roster:
+            name = p.get("person", {}).get("fullName", "")
+            if name:
+                out.append({"name": name, "team": team, "_norm": norm(name)})
+
+    return pd.DataFrame(out)
+
 try:
     batters = pd.read_csv("batters.csv")
 except Exception as e:
@@ -119,6 +173,16 @@ except Exception as e:
     st.stop()
 
 batters["_name"] = make_name(batters)
+
+roster = build_roster()
+
+b_team = find_col(batters, ["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
+
+if b_team:
+    batters["_team"] = batters[b_team].astype(str).apply(normalize_team)
+else:
+    lookup = dict(zip(roster["_norm"], roster["team"])) if not roster.empty else {}
+    batters["_team"] = batters["_name"].apply(lambda x: lookup.get(norm(x), "N/A"))
 
 b_pa = find_col(batters, ["pa"])
 b_bip = find_col(batters, ["bip"])
@@ -132,7 +196,6 @@ b_barrel = find_col(batters, ["barrel","barrel_pct","brl"])
 b_hard = find_col(batters, ["hard_hit","hardhit","hard_hit_pct"])
 b_iso = find_col(batters, ["iso"])
 b_recent = find_col(batters, ["last7_slg","last7","last14","recent","recent_form"])
-b_team = find_col(batters, ["team","player_team","bat_team","team_name","club","team_abbrev"])
 
 def batter_metrics(row):
     pa = safe_float(row[b_pa], 250) if b_pa else 250
@@ -227,7 +290,7 @@ for _, r in batters.iterrows():
 
     rows.append({
         "Player": r["_name"],
-        "Team": r[b_team] if b_team else "N/A",
+        "Team": r["_team"],
         "Dinger Score": s,
         "Grade": grade_score(s),
         "Badge": badge_score(s),
@@ -331,6 +394,11 @@ with tab4:
     st.write("App Name: AON BETS HR MODEL ⚾️ 💣")
     st.write("Players scored:", len(df))
     st.write("Batters CSV rows:", len(batters))
+    st.write("MLB API roster rows:", len(roster))
+    st.write("Detected team column:", b_team if b_team else "None — using MLB roster API")
+    st.write("Players still N/A team:", int((batters["_team"] == "N/A").sum()))
+    st.write("Team counts:")
+    st.dataframe(batters["_team"].value_counts(dropna=False).reset_index(), use_container_width=True)
     st.write("Detected columns:")
     st.json({
         "pa": b_pa,
