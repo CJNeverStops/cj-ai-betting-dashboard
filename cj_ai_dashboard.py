@@ -1,5 +1,4 @@
 import math, time
-from datetime import datetime
 import pandas as pd
 import requests
 import streamlit as st
@@ -16,22 +15,35 @@ if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
 st.markdown("""
 <style>
 .stApp { background:#050914; color:white; }
-.hero { background:linear-gradient(135deg,#3b171b,#111827); padding:24px; border-radius:22px; margin-bottom:20px; }
-.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:18px; margin-bottom:22px; }
-.ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:14px; }
-.ai-table th { background:#111827; padding:11px; text-align:left; white-space:nowrap; }
-.ai-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
-.note { background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:14px; color:#cbd5e1; }
+.block-container { padding-top:1rem; padding-left:.75rem; padding-right:.75rem; max-width:100%; }
+.hero { background:linear-gradient(135deg,#3b171b,#111827); padding:18px; border-radius:18px; margin-bottom:16px; }
+.hero h1 { font-size:28px; margin:0; }
+.hero p { font-size:13px; color:#cbd5e1; margin-top:6px; }
+.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:16px; margin-bottom:18px; }
+.ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:13px; }
+.ai-table th { background:#111827; padding:9px; text-align:left; white-space:nowrap; position:sticky; top:0; }
+.ai-table td { padding:8px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
+.note { background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px; color:#cbd5e1; }
+.reason-cell { white-space:normal!important; min-width:520px; color:#cbd5e1; }
+@media (max-width: 700px) {
+    .hero h1 { font-size:22px; }
+    .hero p { font-size:12px; }
+    .ai-table { font-size:12px; }
+    .ai-table th, .ai-table td { padding:7px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Live Matchups • Pitcher Risk • Park Factors • Weather/Wind • Smart HR Parlays • Auto Refresh</p>
+<p>Mobile View • Live Matchups • Pitcher Risk • Park/Weather • Strikeouts Restored • Smart Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
+# =========================
+# HELPERS
+# =========================
 def clamp(x,a,b): return max(a,min(b,x))
 
 def safe_float(x,d=0.0):
@@ -124,7 +136,7 @@ def player_match(a,b):
     return len(ap)>=2 and len(bp)>=2 and ap[-1]==bp[-1] and ap[0][0]==bp[0][0]
 
 def find_player(df,name):
-    if not name:
+    if not name or df.empty:
         return None
     hits=df[df["_name"].apply(lambda x: player_match(x,name))]
     return hits.iloc[0] if not hits.empty else None
@@ -149,15 +161,13 @@ def badge_score(s):
 
 def color_grade(g):
     return {
-        "S+":"#7f1d1d",
-        "S":"#166534",
-        "A+":"#15803d",
-        "A":"#2563eb",
-        "B":"#6d28d9",
-        "C":"#92400e",
-        "D":"#374151"
+        "S+":"#7f1d1d", "S":"#166534", "A+":"#15803d",
+        "A":"#2563eb", "B":"#6d28d9", "C":"#92400e", "D":"#374151"
     }.get(g,"#374151")
 
+# =========================
+# STADIUM / WEATHER
+# =========================
 STADIUM_DATA = {
     "Yankee Stadium": ("Bronx", "NY", 1.18),
     "Citizens Bank Park": ("Philadelphia", "PA", 1.20),
@@ -208,7 +218,6 @@ def park_note(factor):
 def get_weather(city,state):
     if not city:
         return {"temp":"N/A","wind":"N/A","dir":"N/A","desc":"Unknown","factor":1.0,"note":"⚖️ weather neutral"}
-
     try:
         q=f"{city},{state}".replace(" ","%20")
         data=requests.get(f"https://wttr.in/{q}?format=j1",timeout=15).json()
@@ -222,23 +231,24 @@ def get_weather(city,state):
 
     factor=1.0
     note="⚖️ weather neutral"
-
     if temp >= 80:
         factor += .05
         note="🔥 warm air boost"
     elif temp <= 55:
         factor -= .05
         note="❄️ cold air downgrade"
-
     if wind >= 10:
         factor += .04
         note += f" • wind {direction} {wind}mph"
 
     return {"temp":temp,"wind":wind,"dir":direction,"desc":desc,"factor":factor,"note":note}
 
+# =========================
+# MLB API
+# =========================
 @st.cache_data(ttl=300)
 def get_schedule():
-    today=datetime.now().strftime("%Y-%m-%d")
+    today=time.strftime("%Y-%m-%d")
     url=f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher,team"
     try:
         data=requests.get(url,timeout=20).json()
@@ -309,7 +319,7 @@ def pitcher_live(pid):
         return {"k_rate":.22,"k9":8.0,"era":4.20,"whip":1.30,"hr9":1.10}
 
     try:
-        season=datetime.now().year
+        season=time.strftime("%Y")
         url=f"https://statsapi.mlb.com/api/v1/people/{pid}/stats?stats=season&group=pitching&season={season}"
         data=requests.get(url,timeout=20).json()
         splits=data.get("stats",[{}])[0].get("splits",[])
@@ -332,6 +342,9 @@ def pitcher_live(pid):
     except:
         return {"k_rate":.22,"k9":8.0,"era":4.20,"whip":1.30,"hr9":1.10}
 
+# =========================
+# LOAD CSV
+# =========================
 try:
     batters=pd.read_csv("batters.csv")
 except Exception as e:
@@ -342,7 +355,6 @@ batters["_name"]=make_name(batters)
 roster=build_roster()
 
 b_team=find_col(batters,["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
-
 if b_team:
     batters["_team"]=batters[b_team].astype(str).apply(normalize_team)
 else:
@@ -362,6 +374,9 @@ b_hard=find_col(batters,["hard_hit","hardhit","hard_hit_pct"])
 b_iso=find_col(batters,["iso"])
 b_recent=find_col(batters,["last7_slg","last7","last14","recent","recent_form"])
 
+# =========================
+# MODEL
+# =========================
 def pitcher_risk(live):
     return clamp(
         .45*scale01(live.get("hr9",1.1),.3,2.2)
@@ -503,6 +518,9 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, order=
         "Reasons": reasons
     }
 
+# =========================
+# BUILD GAME ROWS
+# =========================
 games_all=get_schedule()
 FINAL_STATUSES=["final","game over","completed early"]
 games=[g for g in games_all if str(g.get("status","")).lower() not in FINAL_STATUSES]
@@ -533,14 +551,53 @@ for g in games:
                 if r: rows.append(r)
 
 df=pd.DataFrame(rows)
-
 if df.empty:
     st.warning("No active/upcoming game rows created. Probable pitchers/lineups may not be posted yet.")
     st.stop()
 
 df=df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
-def tier_parlays(data, col, label):
+# =========================
+# STRIKEOUT MODEL RESTORED
+# =========================
+k_rows=[]
+for g in games:
+    for name,pid,opp in [(g["away_p"],g["away_p_id"],g["home"]),(g["home_p"],g["home_p_id"],g["away"])]:
+        if not name:
+            continue
+        live=pitcher_live(pid)
+        proj_ks=clamp(3.8+(live["k_rate"]-.20)*18+(live["k9"]-8.0)*.35,2.0,10.5)
+
+        def over_prob(line):
+            return clamp(1/(1+math.exp(-(proj_ks-line))),.05,.92)
+
+        k45=round(over_prob(4.5)*100,1)
+        k55=round(over_prob(5.5)*100,1)
+        k65=round(over_prob(6.5)*100,1)
+        best=max(k45,k55,k65)
+
+        k_rows.append({
+            "Pitcher": name,
+            "Opponent": normalize_team(opp),
+            "Projected Ks": round(proj_ks,1),
+            "Live K%": round(live["k_rate"]*100,1),
+            "K/9": round(live["k9"],1),
+            "ERA": live["era"],
+            "WHIP": live["whip"],
+            "Over 4.5 K%": k45,
+            "Over 5.5 K%": k55,
+            "Over 6.5 K%": k65,
+            "Best K%": best,
+            "Grade": "A+" if best>=75 else "A" if best>=65 else "A-" if best>=58 else "B" if best>=50 else "C",
+            "Pick Explanation": f"{name} projects for {round(proj_ks,1)} Ks using live K%, K/9, ERA, and WHIP."
+        })
+
+k_df=pd.DataFrame(k_rows).sort_values("Best K%", ascending=False) if k_rows else pd.DataFrame()
+
+# =========================
+# PARLAYS
+# =========================
+def tier_parlays(data, col, label, name_col="Player"):
     pool=data.sort_values(col, ascending=False).head(15).reset_index(drop=True)
     out=[]
     for i in range(0,15,3):
@@ -548,9 +605,9 @@ def tier_parlays(data, col, label):
         if len(c)<3: continue
         out.append({
             "Parlay": f"{label} 3-Leg #{len(out)+1}",
-            "Leg 1": f"{c.iloc[0]['Player']} ({c.iloc[0][col]}%)",
-            "Leg 2": f"{c.iloc[1]['Player']} ({c.iloc[1][col]}%)",
-            "Leg 3": f"{c.iloc[2]['Player']} ({c.iloc[2][col]}%)",
+            "Leg 1": f"{c.iloc[0][name_col]} ({c.iloc[0][col]}%)",
+            "Leg 2": f"{c.iloc[1][name_col]} ({c.iloc[1][col]}%)",
+            "Leg 3": f"{c.iloc[2][name_col]} ({c.iloc[2][col]}%)",
             "Avg Model %": round(c[col].mean(),1),
             "Model Combo Confidence": round((c[col]/100).prod()*100,2),
             "Notes": f"Tier #{len(out)+1}: ranked group {i+1}-{i+3}, no repeated top-player overlap"
@@ -604,12 +661,24 @@ parlay_hit=tier_parlays(df,"Hit %","Hit")
 parlay_tb=tier_parlays(df,"TB %","TB")
 parlay_rbi=tier_parlays(df,"RBI %","RBI")
 parlay_laser=tier_parlays(df,"Laser %","Laser")
+parlay_k=tier_parlays(k_df,"Best K%","K","Pitcher") if not k_df.empty else pd.DataFrame()
 
-def render(data):
+# =========================
+# DISPLAY
+# =========================
+mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Pitcher","Park","Lineup","Order"]
+full_cols = ["Player","Team","Matchup","Pitcher","Park","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Pitcher Risk","Park Edge","Weather Edge","Power","Laser"]
+breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Dinger Score","HR %","Reasons"]
+
+def render(data, cols=None):
     if data is None or data.empty:
         return "<div class='note'>No data available.</div>"
 
-    cols=list(data.columns)
+    if cols is None:
+        cols=list(data.columns)
+    else:
+        cols=[c for c in cols if c in data.columns]
+
     html="<div class='table-wrap'><table class='ai-table'><tr>"
     for c in cols:
         html+=f"<th>{c}</th>"
@@ -629,8 +698,8 @@ def render(data):
             elif c=="Form":
                 val=str(v)
                 style="color:#86efac;font-weight:900;" if "Hot" in val else "color:#93c5fd;font-weight:900;" if "Good" in val else "color:#fde68a;font-weight:900;" if "Neutral" in val else "color:#fca5a5;font-weight:900;"
-            elif c in ["Reasons","Notes","Strategy"]:
-                style="white-space:normal;min-width:650px;color:#cbd5e1;"
+            elif c in ["Reasons","Pick Explanation","Notes","Strategy"]:
+                style="white-space:normal;min-width:520px;color:#cbd5e1;"
             elif c in ["Leg 1 Anchor","Leg 2 Support","Leg 3 Value","Leg 1","Leg 2","Leg 3"]:
                 style="font-weight:800;color:#e5e7eb;"
             html+=f"<td style='{style}'>{v}</td>"
@@ -639,18 +708,30 @@ def render(data):
     html+="</table></div>"
     return html
 
-tab1,tab2,tab3,tab4=st.tabs(["🔥 Best HR Plays","📋 Full Model","🧾 Parlays","🛠 Debug"])
+tab1,tab2,tab3,tab4,tab5,tab6=st.tabs([
+    "📱 Mobile HR",
+    "📋 Full HR",
+    "🎯 Strikeouts",
+    "🧾 Parlays",
+    "🔎 Breakdown",
+    "🛠 Debug"
+])
 
 with tab1:
-    st.subheader("🔥 Best HR Rated Plays")
+    st.subheader("📱 Mobile-Friendly Best HR Plays")
     st.caption(f"Active/upcoming games: {len(games)} | Finished removed: {len(games_all)-len(games)} | Auto refresh: 5 min")
-    st.markdown(render(df.head(40)), unsafe_allow_html=True)
+    st.markdown(render(df.head(40), mobile_cols), unsafe_allow_html=True)
 
 with tab2:
     st.subheader("📋 Full AON BETS HR MODEL")
-    st.markdown(render(df), unsafe_allow_html=True)
+    st.markdown(render(df, full_cols), unsafe_allow_html=True)
 
 with tab3:
+    st.subheader("🎯 Live Pitcher Strikeout Model")
+    k_mobile = ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]
+    st.markdown(render(k_df, k_mobile), unsafe_allow_html=True)
+
+with tab4:
     st.subheader("🧾 Top Parlays")
     st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
@@ -662,9 +743,16 @@ with tab3:
     st.markdown(render(parlay_rbi), unsafe_allow_html=True)
     st.markdown("### 🚀 Laser Parlays")
     st.markdown(render(parlay_laser), unsafe_allow_html=True)
+    st.markdown("### 🎯 Strikeout Parlays")
+    st.markdown(render(parlay_k), unsafe_allow_html=True)
 
-with tab4:
+with tab5:
+    st.subheader("🔎 Pick Breakdown / Reasons")
+    st.markdown(render(df.head(80), breakdown_cols), unsafe_allow_html=True)
+
+with tab6:
     st.write("Players scored:", len(df))
+    st.write("Pitchers scored:", len(k_df))
     st.write("Games loaded:", len(games_all))
     st.write("Active/upcoming games:", len(games))
     st.write("Batters CSV rows:", len(batters))
