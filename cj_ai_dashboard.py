@@ -30,13 +30,10 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Auto Matchup Edge • No CSV Matchup Columns Needed • Pitcher Risk • Park/Weather • Strikeouts • Smart Parlays</p>
+<p>Auto Matchup Edge • Dynamic Parlays • Removes Started/Finished Games • Pitcher Risk • Park/Weather • Strikeouts</p>
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
-# HELPERS
-# =========================
 def clamp(x,a,b): return max(a,min(b,x))
 
 def safe_float(x,d=0.0):
@@ -158,9 +155,14 @@ def color_grade(g):
         "A":"#2563eb","B":"#6d28d9","C":"#92400e","D":"#374151"
     }.get(g,"#374151")
 
-# =========================
-# PARK + WEATHER
-# =========================
+def is_game_available_for_parlays(status):
+    s = str(status).lower().strip()
+    bad = [
+        "in progress", "live", "final", "game over", "completed early",
+        "delayed", "suspended", "postponed", "cancelled"
+    ]
+    return not any(x in s for x in bad)
+
 STADIUM_DATA={
     "Yankee Stadium":("Bronx","NY",1.18),
     "Citizens Bank Park":("Philadelphia","PA",1.20),
@@ -231,9 +233,6 @@ def get_weather(city,state):
         note += f" • wind {direction} {wind}mph"
     return {"temp":temp,"wind":wind,"dir":direction,"factor":factor,"note":note}
 
-# =========================
-# MLB API
-# =========================
 @st.cache_data(ttl=300)
 def get_schedule():
     today=time.strftime("%Y-%m-%d")
@@ -333,9 +332,6 @@ def pitcher_live(pid):
     except:
         return {"k_rate":.22,"k9":8.0,"era":4.20,"whip":1.30,"hr9":1.10,"hand":"R"}
 
-# =========================
-# LOAD DATA
-# =========================
 try:
     batters=pd.read_csv("batters.csv")
 except Exception as e:
@@ -365,9 +361,6 @@ b_hard=find_col(batters,["hard_hit","hardhit","hard_hit_pct"])
 b_iso=find_col(batters,["iso"])
 b_recent=find_col(batters,["last7_slg","last7","last14","recent","recent_form"])
 
-# =========================
-# MODEL
-# =========================
 def pitcher_risk(live):
     return clamp(
         .45*scale01(live.get("hr9",1.1),.3,2.2)
@@ -430,14 +423,11 @@ def batter_metrics(row):
 def auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge):
     pitcher_hr = pitcher_risk(live)
     pitcher_k = scale01(live.get("k_rate",.22),.16,.34)
-    hitter_power = m["Power"]
-    hitter_laser = m["Laser"]
-    hitter_form = m["Form Score"]
 
     raw = (
-        .34*hitter_power
-        + .18*hitter_laser
-        + .13*hitter_form
+        .34*m["Power"]
+        + .18*m["Laser"]
+        + .13*m["Form Score"]
         + .18*pitcher_hr
         + .07*park_edge
         + .05*weather_edge
@@ -448,13 +438,13 @@ def auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge):
     edge = clamp(raw,0,1)
 
     note = (
-        f"auto edge from batter power/contact + pitcher HR risk + K risk; "
+        f"auto edge from batter power + pitcher HR risk + K risk; "
         f"pitcher hand {live.get('hand','R')} • K risk {round(pitcher_k,2)}"
     )
 
     return edge, note
 
-def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, order="—", lineup="Projected"):
+def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_status, order="—", lineup="Projected"):
     b=find_player(batters,player_name)
     if b is None:
         return None
@@ -506,6 +496,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, order=
     reasons=(
         f"{m['Form']} • Auto Matchup Edge {round(me,2)} ({me_note}) • "
         f"Matchup: {matchup} vs {pitcher_name} • "
+        f"Game Status: {game_status} • "
         f"Pitcher Risk {round(pr,2)} HR/9 {round(live['hr9'],2)} ERA {live['era']} WHIP {live['whip']} • "
         f"Park: {park} {park_note(park_factor)} ({park_factor}) • "
         f"Weather: {weather['note']} {weather['temp']}°F wind {weather['wind']}mph {weather['dir']} • "
@@ -518,6 +509,8 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, order=
         "Matchup":matchup,
         "Pitcher":pitcher_name,
         "Park":park,
+        "Game Status":game_status,
+        "Parlay Eligible":"Yes" if is_game_available_for_parlays(game_status) else "No",
         "Lineup":lineup,
         "Order":order,
         "Dinger Score":dinger_score,
@@ -538,36 +531,38 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, order=
         "Reasons":reasons
     }
 
-# =========================
-# BUILD GAME ROWS
-# =========================
 games_all=get_schedule()
-FINAL_STATUSES=["final","game over","completed early"]
-games=[g for g in games_all if str(g.get("status","")).lower() not in FINAL_STATUSES]
+
+VISIBLE_BAD_STATUSES=["final","game over","completed early","postponed","cancelled"]
+games=[
+    g for g in games_all
+    if not any(x in str(g.get("status","")).lower() for x in VISIBLE_BAD_STATUSES)
+]
 
 rows=[]
 for g in games:
     matchup=f'{g["away"]} @ {g["home"]}'
+    status=g.get("status","")
     lu=get_lineups(g["gamePk"])
 
     if g["home_p"]:
         if lu["away"]:
             for h in lu["away"]:
-                r=score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], h["order"], "Final")
+                r=score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _,b in batters[batters["_team"]==normalize_team(g["away"])].iterrows():
-                r=score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"])
+                r=score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status)
                 if r: rows.append(r)
 
     if g["away_p"]:
         if lu["home"]:
             for h in lu["home"]:
-                r=score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], h["order"], "Final")
+                r=score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _,b in batters[batters["_team"]==normalize_team(g["home"])].iterrows():
-                r=score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"])
+                r=score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status)
                 if r: rows.append(r)
 
 df=pd.DataFrame(rows)
@@ -577,11 +572,14 @@ if df.empty:
 
 df=df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
-# =========================
-# STRIKEOUT MODEL
-# =========================
+parlay_pool=df[df["Parlay Eligible"]=="Yes"].copy()
+parlay_pool=parlay_pool.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+
 k_rows=[]
 for g in games:
+    if not is_game_available_for_parlays(g.get("status","")):
+        continue
+
     for name,pid,opp in [(g["away_p"],g["away_p_id"],g["home"]),(g["home_p"],g["home_p_id"],g["away"])]:
         if not name: continue
         live=pitcher_live(pid)
@@ -613,10 +611,9 @@ for g in games:
 
 k_df=pd.DataFrame(k_rows).sort_values("Best K%", ascending=False) if k_rows else pd.DataFrame()
 
-# =========================
-# PARLAYS
-# =========================
 def tier_parlays(data, col, label, name_col="Player"):
+    if data is None or data.empty:
+        return pd.DataFrame()
     pool=data.sort_values(col, ascending=False).head(15).reset_index(drop=True)
     out=[]
     for i in range(0,15,3):
@@ -629,11 +626,14 @@ def tier_parlays(data, col, label, name_col="Player"):
             "Leg 3":f"{c.iloc[2][name_col]} ({c.iloc[2][col]}%)",
             "Avg Model %":round(c[col].mean(),1),
             "Model Combo Confidence":round((c[col]/100).prod()*100,2),
-            "Notes":f"Tier #{len(out)+1}: ranked group {i+1}-{i+3}, no repeated top-player overlap"
+            "Notes":f"Dynamic parlay: only games not started yet; group {i+1}-{i+3}"
         })
     return pd.DataFrame(out)
 
 def smart_hr_parlays(data):
+    if data is None or data.empty:
+        return pd.DataFrame()
+
     pool=data.sort_values("Dinger Score", ascending=False).head(40).reset_index(drop=True)
     elite=pool[pool["Grade"].isin(["S+","S"])]
     strong=pool[pool["Grade"].isin(["A+","A"])]
@@ -670,24 +670,21 @@ def smart_hr_parlays(data):
                 "Leg 3 Value":f"{legs[2]['Player']} | {legs[2]['Grade']} | {legs[2]['HR %']}%",
                 "Avg HR %":avg,
                 "Model Combo Confidence":combo,
-                "Strategy":"1 elite/anchor + 1 strong support + 1 value leg, different games, no repeated players"
+                "Strategy":"Dynamic: only games not started; 1 anchor + 1 support + 1 value; different games"
             })
 
     return pd.DataFrame(parlays)
 
-parlay_hr=smart_hr_parlays(df)
-parlay_hit=tier_parlays(df,"Hit %","Hit")
-parlay_tb=tier_parlays(df,"TB %","TB")
-parlay_rbi=tier_parlays(df,"RBI %","RBI")
-parlay_laser=tier_parlays(df,"Laser %","Laser")
+parlay_hr=smart_hr_parlays(parlay_pool)
+parlay_hit=tier_parlays(parlay_pool,"Hit %","Hit")
+parlay_tb=tier_parlays(parlay_pool,"TB %","TB")
+parlay_rbi=tier_parlays(parlay_pool,"RBI %","RBI")
+parlay_laser=tier_parlays(parlay_pool,"Laser %","Laser")
 parlay_k=tier_parlays(k_df,"Best K%","K","Pitcher") if not k_df.empty else pd.DataFrame()
 
-# =========================
-# DISPLAY
-# =========================
-mobile_cols=["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Lineup","Order"]
-full_cols=["Player","Team","Matchup","Pitcher","Park","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser"]
-breakdown_cols=["Player","Team","Matchup","Pitcher","Park","Dinger Score","HR %","Auto Matchup Edge","Reasons"]
+mobile_cols=["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order"]
+full_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser"]
+breakdown_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Reasons"]
 
 def render(data, cols=None):
     if data is None or data.empty:
@@ -712,6 +709,8 @@ def render(data, cols=None):
                 style=f"background:{color_grade(v)};font-weight:900;text-align:center;"
             elif c=="Dinger Score":
                 style="background:rgba(34,197,94,.38);font-weight:900;" if safe_float(v)>=28 else "background:rgba(59,130,246,.28);font-weight:900;" if safe_float(v)>=24 else "background:rgba(234,179,8,.22);font-weight:900;"
+            elif c=="Parlay Eligible":
+                style="background:rgba(34,197,94,.25);font-weight:900;" if str(v)=="Yes" else "background:rgba(239,68,68,.22);font-weight:900;"
             elif "%" in c or c in ["Avg Model %","Model Combo Confidence","Avg HR %"]:
                 style="background:rgba(34,197,94,.25);" if safe_float(v)>=60 else "background:rgba(234,179,8,.18);" if safe_float(v)>=35 else "background:rgba(239,68,68,.15);"
             elif c=="Form":
@@ -727,11 +726,11 @@ def render(data, cols=None):
     html+="</table></div>"
     return html
 
-tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Parlays","🔎 Breakdown","🛠 Debug"])
+tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab1:
     st.subheader("📱 Mobile-Friendly Best HR Plays")
-    st.caption(f"Active/upcoming games: {len(games)} | Finished removed: {len(games_all)-len(games)} | Auto refresh: 5 min")
+    st.caption(f"Active/upcoming games shown: {len(games)} | Dynamic parlay pool players: {len(parlay_pool)} | Auto refresh: 5 min")
     st.markdown(render(df.head(40), mobile_cols), unsafe_allow_html=True)
 
 with tab2:
@@ -743,7 +742,8 @@ with tab3:
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
 with tab4:
-    st.subheader("🧾 Top Parlays")
+    st.subheader("🧾 Dynamic Parlays")
+    st.markdown("<div class='note'>These parlays only use players from games that have not started. When a game starts or finishes, it gets removed from the parlay pool on refresh.</div>", unsafe_allow_html=True)
     st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
     st.markdown("### ✅ Hit Parlays")
@@ -763,11 +763,13 @@ with tab5:
 
 with tab6:
     st.write("Players scored:",len(df))
+    st.write("Dynamic parlay pool players:",len(parlay_pool))
     st.write("Pitchers scored:",len(k_df))
     st.write("Games loaded:",len(games_all))
-    st.write("Active/upcoming games:",len(games))
+    st.write("Active/upcoming games shown:",len(games))
     st.write("Batters CSV rows:",len(batters))
-    st.write("Auto matchup edge:", "ON - no CSV matchup columns needed")
+    st.write("Game statuses:")
+    st.dataframe(pd.DataFrame(games_all)[["away","home","park","status"]] if games_all else pd.DataFrame(), use_container_width=True)
     st.write("Detected columns:")
     st.json({
         "pa":b_pa,
