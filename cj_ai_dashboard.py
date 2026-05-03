@@ -804,21 +804,70 @@ with tab3:
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
 with tab4:
+    with tab4:
     st.subheader("🧾 Dynamic Parlays")
     st.markdown("<div class='note'>These parlays only use players from games that have not started. When a game starts or finishes, it gets removed from the parlay pool on refresh.</div>", unsafe_allow_html=True)
+
+    st.markdown("### 🎰 Clickable HR Parlay Generator")
+
+    if st.button("Generate Highest Probability 3-Leg HR Parlay"):
+        generator_pool = parlay_pool.sort_values("HR %", ascending=False).copy()
+
+        selected = []
+        used_matchups = set()
+
+        for _, r in generator_pool.iterrows():
+            if len(selected) >= 3:
+                break
+            if r["Matchup"] in used_matchups:
+                continue
+            selected.append(r)
+            used_matchups.add(r["Matchup"])
+
+        if len(selected) < 3:
+            for _, r in generator_pool.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] not in [x["Player"] for x in selected]:
+                    selected.append(r)
+
+        if len(selected) == 3:
+            gen_df = pd.DataFrame(selected)
+
+            combo_chance = round(
+                (safe_float(gen_df.iloc[0]["HR %"]) / 100)
+                * (safe_float(gen_df.iloc[1]["HR %"]) / 100)
+                * (safe_float(gen_df.iloc[2]["HR %"]) / 100)
+                * 100,
+                2
+            )
+
+            st.success(f"Generated Highest Probability 3-Leg HR Parlay | Model Combo Confidence: {combo_chance}%")
+
+            st.markdown(render(
+                gen_df,
+                ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","HR Tracker","Auto Matchup Edge"]
+            ), unsafe_allow_html=True)
+        else:
+            st.warning("Not enough eligible players to generate a 3-leg HR parlay.")
+
     st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
+
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
+
     st.markdown("### 🧱 Total Bases Parlays")
     st.markdown(render(parlay_tb), unsafe_allow_html=True)
+
     st.markdown("### 🏃 RBI Parlays")
     st.markdown(render(parlay_rbi), unsafe_allow_html=True)
+
     st.markdown("### 🚀 Laser Parlays")
     st.markdown(render(parlay_laser), unsafe_allow_html=True)
+
     st.markdown("### 🎯 Strikeout Parlays")
     st.markdown(render(parlay_k), unsafe_allow_html=True)
-
 with tab5:
     st.subheader("🔎 Pick Breakdown / Reasons")
     st.markdown(render(df.head(80), breakdown_cols), unsafe_allow_html=True)
