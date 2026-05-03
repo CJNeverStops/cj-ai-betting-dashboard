@@ -803,6 +803,74 @@ with tab3:
     st.subheader("🎯 Live Pitcher Strikeout Model")
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
+try:
+    odds_df = pd.read_csv("odds.csv")
+except:
+    odds_df = pd.DataFrame()
+
+def american_to_implied(odds):
+    try:
+        odds = float(odds)
+        if odds > 0:
+            return 100 / (odds + 100)
+        return abs(odds) / (abs(odds) + 100)
+    except:
+        return None
+
+def odds_edge(player, model_pct):
+    if odds_df.empty:
+        return "N/A", "N/A", "N/A"
+
+    pc = find_col(odds_df, ["player","name","player_name"])
+    oc = find_col(odds_df, ["hr_odds","odds","american_odds"])
+
+    if not pc or not oc:
+        return "N/A", "N/A", "N/A"
+
+    hit = odds_df[odds_df[pc].astype(str).apply(lambda x: player_match(x, player))]
+    if hit.empty:
+        return "N/A", "N/A", "N/A"
+
+    odds = hit.iloc[0][oc]
+    implied = american_to_implied(odds)
+
+    if implied is None:
+        return odds, "N/A", "N/A"
+
+    edge = model_pct - implied * 100
+    return odds, round(implied * 100, 1), round(edge, 1)
+
+def generate_top_hr_combo(pool, legs=3):
+    if pool is None or pool.empty:
+        return pd.DataFrame(), 0
+
+    selected = []
+    used_matchups = set()
+
+    for _, r in pool.sort_values("HR %", ascending=False).iterrows():
+        if len(selected) >= legs:
+            break
+        if r["Matchup"] in used_matchups:
+            continue
+
+        selected.append(r)
+        used_matchups.add(r["Matchup"])
+
+    if len(selected) < legs:
+        for _, r in pool.sort_values("HR %", ascending=False).iterrows():
+            if len(selected) >= legs:
+                break
+            if r["Player"] not in [x["Player"] for x in selected]:
+                selected.append(r)
+
+    gen_df = pd.DataFrame(selected)
+
+    if len(gen_df) == legs:
+        combo = round((gen_df["HR %"] / 100).prod() * 100, 2)
+    else:
+        combo = 0
+
+    return gen_df, combo
 with tab4:
     with tab4:
     st.subheader("🧾 Dynamic Parlays")
