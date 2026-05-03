@@ -873,60 +873,63 @@ def generate_top_hr_combo(pool, legs=3):
     return gen_df, combo
     
 with tab4:
-    st.subheader("🧾 Dynamic Parlays")
+    st.subheader("🧾 Dynamic HR Parlays")
 
-    st.markdown("<div class='note'>Parlays only use games that have not started. They refresh every 5 minutes.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Generator builds 3-leg HR combos using high HR %, strong Dinger Score, strong matchup edge, and different games when possible.</div>", unsafe_allow_html=True)
 
-    st.markdown("### 🎰 Auto Re-Rolled Best HR Parlay")
-    auto_3leg, auto_3conf = generate_top_hr_combo(parlay_pool, 3)
+    st.markdown("### 🎰 Clickable Smart HR Parlay Generator")
 
-    if not auto_3leg.empty:
-        st.success(f"Auto Best 3-Leg HR Parlay | Combo Confidence: {auto_3conf}%")
-        st.markdown(render(auto_3leg, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","HR Tracker","Auto Matchup Edge"]), unsafe_allow_html=True)
-    else:
-        st.warning("No eligible HR parlay available.")
+    if st.button("Generate Smart 3-Leg HR Parlay"):
+        generator_pool = parlay_pool.copy()
 
-    st.markdown("### 🛡️ Safest 2-Leg HR Combo")
-    safe_2leg, safe_2conf = generate_top_hr_combo(parlay_pool, 2)
+        generator_pool["Combo Score"] = (
+            generator_pool["HR %"].apply(safe_float) * 0.45
+            + generator_pool["Dinger Score"].apply(safe_float) * 0.30
+            + generator_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.25
+        )
 
-    if not safe_2leg.empty:
-        st.success(f"Safest 2-Leg HR Combo | Combo Confidence: {safe_2conf}%")
-        st.markdown(render(safe_2leg, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","HR Tracker","Auto Matchup Edge"]), unsafe_allow_html=True)
+        generator_pool = generator_pool.sort_values("Combo Score", ascending=False)
 
-    st.markdown("### 🎯 Clickable HR Parlay Generator")
+        selected = []
+        used_matchups = set()
 
-    if st.button("Generate Highest Probability 3-Leg HR Parlay"):
-        gen_df, combo_chance = generate_top_hr_combo(parlay_pool, 3)
+        for _, r in generator_pool.iterrows():
+            if len(selected) >= 3:
+                break
 
-        if len(gen_df) == 3:
-            st.success(f"Generated Highest Probability 3-Leg HR Parlay | Model Combo Confidence: {combo_chance}%")
-            st.markdown(render(gen_df, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","HR Tracker","Auto Matchup Edge"]), unsafe_allow_html=True)
+            if r["Matchup"] in used_matchups:
+                continue
+
+            selected.append(r)
+            used_matchups.add(r["Matchup"])
+
+        if len(selected) < 3:
+            for _, r in generator_pool.iterrows():
+                if len(selected) >= 3:
+                    break
+
+                if r["Player"] not in [x["Player"] for x in selected]:
+                    selected.append(r)
+
+        if len(selected) == 3:
+            gen_df = pd.DataFrame(selected)
+
+            combo_chance = round(
+                (safe_float(gen_df.iloc[0]["HR %"]) / 100)
+                * (safe_float(gen_df.iloc[1]["HR %"]) / 100)
+                * (safe_float(gen_df.iloc[2]["HR %"]) / 100)
+                * 100,
+                2
+            )
+
+            st.success(f"Generated Smart 3-Leg HR Combo | Model Combo Confidence: {combo_chance}%")
+
+            st.markdown(render(
+                gen_df,
+                ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Combo Score"]
+            ), unsafe_allow_html=True)
         else:
-            st.warning("Not enough eligible players.")
-
-    st.markdown("### 💰 Vegas Edge HR Board")
-
-    if not parlay_pool.empty:
-        edge_rows = []
-        for _, r in parlay_pool.head(40).iterrows():
-            book_odds, book_imp, edge = odds_edge(r["Player"], safe_float(r["HR %"]))
-            edge_rows.append({
-                "Player": r["Player"],
-                "Team": r["Team"],
-                "HR %": r["HR %"],
-                "Book Odds": book_odds,
-                "Book Implied %": book_imp,
-                "Edge %": edge,
-                "Pitcher": r["Pitcher"],
-                "Park": r["Park"]
-            })
-
-        edge_df = pd.DataFrame(edge_rows)
-        if "Edge %" in edge_df.columns:
-            edge_df["_sort"] = edge_df["Edge %"].apply(lambda x: safe_float(x, -999))
-            edge_df = edge_df.sort_values("_sort", ascending=False).drop(columns=["_sort"])
-
-        st.markdown(render(edge_df, ["Player","Team","HR %","Book Odds","Book Implied %","Edge %","Pitcher","Park"]), unsafe_allow_html=True)
+            st.warning("Not enough eligible players to generate a 3-leg HR parlay.")
 
     st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
