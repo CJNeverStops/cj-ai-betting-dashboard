@@ -20,10 +20,19 @@ st.markdown("""
 .hero { background:linear-gradient(135deg,#3b171b,#111827); padding:18px; border-radius:18px; margin-bottom:16px; }
 .hero h1 { font-size:26px; margin:0; }
 .hero p { font-size:13px; color:#cbd5e1; margin-top:6px; }
-.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:16px; margin-bottom:18px; }
-.ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:13px; }
-.ai-table th { background:#111827; padding:9px; text-align:left; white-space:nowrap; }
-.ai-table td { padding:8px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
+.table-wrap { overflow-x:auto; border:1px solid #1f2937; border-radius:16px; margin-bottom:18px; max-width:100%; }
+.ai-table { width:100%; border-collapse:collapse; background:#0b1220; color:white; font-size:12px; table-layout:auto; }
+.ai-table th { background:#111827; padding:7px; text-align:left; white-space:nowrap; }
+.ai-table td { padding:7px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
+@media (max-width: 700px) {
+    .hero h1 { font-size:20px; }
+    .hero p { font-size:11px; }
+    .ai-table { font-size:11px; }
+    .ai-table th, .ai-table td { padding:6px; }
+    .card { padding:12px; }
+    .card h2 { font-size:18px; }
+    .card h3 { font-size:16px; }
+}
 .note { background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px; color:#cbd5e1; }
 .card { background:#0b1220; border:1px solid #1f2937; border-radius:18px; padding:16px; margin-bottom:14px; }
 .card h2 { margin-top:0; }
@@ -175,7 +184,7 @@ def color_grade(g):
 
 def is_game_available_for_parlays(status):
     s = str(status).lower().strip()
-    bad = ["in progress", "live", "final", "game over", "completed early", "delayed", "suspended", "postponed", "cancelled"]
+    bad = ["in progress", "live", "final", "game over", "completed early", "postponed", "cancelled"]
     return not any(x in s for x in bad)
 
 # =========================
@@ -661,7 +670,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
 # BUILD GAME ROWS
 # =========================
 games_all = get_schedule()
-VISIBLE_BAD_STATUSES = ["postponed", "cancelled"]
+VISIBLE_BAD_STATUSES = ["final", "game over", "completed early", "postponed", "cancelled"]
 games = [g for g in games_all if not any(x in str(g.get("status","")).lower() for x in VISIBLE_BAD_STATUSES)]
 
 rows = []
@@ -1017,11 +1026,11 @@ with tab0:
     else:
         st.markdown("<div class='card'><h2>🎯 Best Pitcher for K's</h2><p>No K picks available.</p></div>", unsafe_allow_html=True)
 
-    st.markdown("### ✅ Best 8 Players for Hits")
-    best_hits_8 = parlay_pool.sort_values("Hit %", ascending=False).head(8) if not parlay_pool.empty else df.sort_values("Hit %", ascending=False).head(8)
-    st.markdown(render(best_hits_8, ["Player","Team","Hit %","Grade","Pitcher","Park","Game Status","Lineup","Order","Season HR","Data Source"]), unsafe_allow_html=True)
+    st.markdown("### ✅ Best 10 Players for Hits")
+    best_hits_10 = parlay_pool.sort_values("Hit %", ascending=False).head(10) if not parlay_pool.empty else df.sort_values("Hit %", ascending=False).head(10)
+    st.markdown(render(best_hits_10, ["Player","Team","Hit %","Grade","Pitcher","Park","Game Status","Lineup","Order","Season HR","Data Source"]), unsafe_allow_html=True)
 
-    st.markdown("### 📌 Top 10 HR Board")
+    st.markdown("### 📌 Top 10 HR Board — Full Merged List")
     st.markdown(render(df.head(10), ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source"]), unsafe_allow_html=True)
 
     st.markdown("### 👑 Injected MLB Players in Today’s Matchups")
@@ -1083,9 +1092,6 @@ with tab4:
     combos_6 = build_hr_combos_by_legs(parlay_pool, legs=6, max_combos=6)
     st.markdown(render(combo_summary_table(combos_6, "6-Leg HR")), unsafe_allow_html=True)
 
-    st.markdown("### 💣 Smart HR Parlays")
-    st.markdown(render(parlay_hr), unsafe_allow_html=True)
-
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
 
@@ -1110,7 +1116,7 @@ with tab6:
     st.write("Dynamic parlay pool players:", len(parlay_pool))
     st.write("Pitchers scored:", len(k_df))
     st.write("Games loaded:", len(games_all))
-    st.write("Active/upcoming games shown:", len(games))
+    st.write("Upcoming/non-final games shown:", len(games))
     st.write("Original batters.csv rows + injected MLB players:", len(batters))
     st.write("All MLB hitters pulled:", len(mlb_players))
     st.write("Missing MLB players injected:", mlb_injected_count)
