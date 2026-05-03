@@ -32,7 +32,7 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>HR Leaders Injected • Auto Matchup Edge • Smart HR Generator • Dynamic Parlays • Strikeouts</p>
+<p>All MLB Players Injected • Season HR For Everyone • Auto Matchup Edge • Smart HR Generator • Dynamic Parlays • Strikeouts</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -275,27 +275,70 @@ def pitcher_live(pid):
         return {"k_rate":.22,"k9":8.0,"era":4.20,"whip":1.30,"hr9":1.10,"hand":"R"}
 
 @st.cache_data(ttl=1800)
-def get_hr_leaders(limit=60):
+def get_all_mlb_hitters():
+    """
+    Pull every current MLB hitter from MLB Stats API and attach season HR to everyone.
+    This lets the app inject missing players and update Season HR for players already in batters.csv.
+    """
     season=time.strftime("%Y")
-    url=("https://statsapi.mlb.com/api/v1/stats/leaders"
-         f"?leaderCategories=homeRuns&statGroup=hitting&season={season}&sportIds=1&limit={limit}&hydrate=person,team")
-    try:
-        data=requests.get(url,timeout=20).json()
-        leaders=data.get("leagueLeaders",[{}])[0].get("leaders",[])
-    except:
-        return pd.DataFrame(columns=["_name","_team","hr_leader_rank","season_hr","hr_leader_injected"])
+    urls=[
+        f"https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting&season={season}&sportIds=1&playerPool=ALL&hydrate=person,team&limit=5000",
+        f"https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting&season={season}&sportIds=1&hydrate=person,team&limit=5000",
+    ]
+    splits=[]
+    for url in urls:
+        try:
+            data=requests.get(url,timeout=25).json()
+            splits=data.get("stats",[{}])[0].get("splits",[])
+            if splits:
+                break
+        except:
+            splits=[]
+
     rows=[]
-    for item in leaders:
-        person=item.get("person",{}) or {}; team=item.get("team",{}) or {}
-        name=person.get("fullName",""); team_name=team.get("name","")
-        rank=safe_float(item.get("rank",999),999); value=safe_float(item.get("value",0),0)
-        if name:
-            rows.append({"_name":name,"_team":normalize_team(team_name),"hr_leader_rank":int(rank),"season_hr":int(value),"hr_leader_injected":True,
-                         "pa":250,"bip":150,"ba":0.245,"est_ba":0.250,"slg":0.500,
-                         "est_slg":clamp(0.430+(value*0.010),0.450,0.720),"woba":0.340,
-                         "est_woba":clamp(0.330+(value*0.004),0.340,0.455),"iso":clamp(0.180+(value*0.008),0.200,0.380),
-                         "barrel":clamp(0.080+(value*0.004),0.090,0.220),"hard_hit":clamp(0.380+(value*0.006),0.400,0.600),
-                         "recent_form":clamp(0.220+(value*0.004),0.240,0.360)})
+    for sp in splits:
+        player=sp.get("player",{}) or sp.get("person",{}) or {}
+        team=sp.get("team",{}) or {}
+        stat=sp.get("stat",{}) or {}
+        name=player.get("fullName","")
+        team_name=team.get("name","")
+        if not name:
+            continue
+
+        avg=safe_float(stat.get("avg",stat.get("battingAverage",.245)),.245)
+        slg=safe_float(stat.get("slg",stat.get("sluggingPercentage",.400)),.400)
+        ops=safe_float(stat.get("ops",stat.get("onBasePlusSlugging",.700)),.700)
+        hr=safe_float(stat.get("homeRuns",0),0)
+        pa=safe_float(stat.get("plateAppearances",stat.get("pa",200)),200)
+        ab=safe_float(stat.get("atBats",stat.get("ab",150)),150)
+        doubles=safe_float(stat.get("doubles",0),0)
+        triples=safe_float(stat.get("triples",0),0)
+
+        iso=slg-avg if slg and avg else .160
+        # Safe power proxies for players missing Statcast columns.
+        barrel=clamp(.055 + hr*0.0035 + iso*0.18, .04, .22)
+        hard_hit=clamp(.340 + hr*0.0045 + iso*0.28, .32, .60)
+        recent_form=clamp(.210 + hr*0.003 + iso*0.15, .20, .36)
+
+        rows.append({
+            "_name":name,
+            "_team":normalize_team(team_name),
+            "season_hr":int(hr),
+            "pa":pa,
+            "bip":ab,
+            "ba":avg,
+            "est_ba":avg,
+            "slg":slg,
+            "est_slg":clamp(slg if slg else (.390+hr*.008), .300, .760),
+            "woba":clamp(ops/2 if ops else .320, .250, .480),
+            "est_woba":clamp(ops/2 if ops else .320, .250, .480),
+            "iso":clamp(iso, .050, .420),
+            "barrel":barrel,
+            "hard_hit":hard_hit,
+            "recent_form":recent_form,
+            "mlb_api_injected":True,
+            "mlb_api_found":True,
+        })
     return pd.DataFrame(rows)
 
 try:
@@ -304,8 +347,42 @@ except Exception as e:
     st.error(f"batters.csv load error: {e}"); st.stop()
 
 batters["_name"]=make_name(batters)
-batters["hr_leader_injected"]=False
+batters["mlb_api_injected"]=False
+batters["mlb_api_found"]=False
 roster=build_roster()
+b_team=find_col(batters,["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
+if b_team:
+    batters["_team"]=batters[b_team].astype(str).apply(normalize_team)
+else:
+    lookup=dict(zip(roster["_norm"],roster["team"])) if not roster.empty else {}
+    batters["_team"]=batters["_name"].apply(lambda x: lookup.get(norm(x),"N/A"))
+
+# Pull ALL MLB hitters and inject any missing players.
+# Also update Season HR for players already in batters.csv.
+mlb_players_df=get_all_mlb_hitters()
+if not mlb_players_df.empty:
+    mlb_lookup={norm(r["_name"]):r for _,r in mlb_players_df.iterrows()}
+
+    # Ensure season_hr exists for every existing row, then update it from MLB API when matched.
+    if "season_hr" not in batters.columns:
+        batters["season_hr"]=0
+    if "mlb_api_found" not in batters.columns:
+        batters["mlb_api_found"]=False
+
+    for idx,row in batters.iterrows():
+        key=norm(row["_name"])
+        if key in mlb_lookup:
+            api=mlb_lookup[key]
+            batters.at[idx,"season_hr"]=api.get("season_hr",0)
+            batters.at[idx,"mlb_api_found"]=True
+            if str(batters.at[idx,"_team"]) in ["N/A","", "nan"]:
+                batters.at[idx,"_team"]=api.get("_team","N/A")
+
+    existing=set(batters["_name"].astype(str).apply(norm))
+    missing_players=mlb_players_df[~mlb_players_df["_name"].astype(str).apply(norm).isin(existing)].copy()
+    if not missing_players.empty:
+        batters=pd.concat([batters,missing_players],ignore_index=True,sort=False)
+
 b_team=find_col(batters,["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
 if b_team:
     batters["_team"]=batters[b_team].astype(str).apply(normalize_team)
@@ -324,7 +401,7 @@ b_team=find_col(batters,["team","player_team","bat_team","team_name","club","tea
 b_pa=find_col(batters,["pa"]); b_bip=find_col(batters,["bip"]); b_ba=find_col(batters,["ba"]); b_est_ba=find_col(batters,["est_ba","xba"])
 b_slg=find_col(batters,["slg"]); b_est_slg=find_col(batters,["est_slg","xslg"]); b_woba=find_col(batters,["woba"]); b_est_woba=find_col(batters,["est_woba","xwoba"])
 b_barrel=find_col(batters,["barrel","barrel_pct","brl"]); b_hard=find_col(batters,["hard_hit","hardhit","hard_hit_pct"]); b_iso=find_col(batters,["iso"])
-b_recent=find_col(batters,["last7_slg","last7","last14","recent","recent_form"]); b_season_hr=find_col(batters,["season_hr","home_runs","hr"]); b_hr_rank=find_col(batters,["hr_leader_rank"]); b_injected=find_col(batters,["hr_leader_injected"])
+b_recent=find_col(batters,["last7_slg","last7","last14","recent","recent_form"]); b_season_hr=find_col(batters,["season_hr","home_runs","hr"]); b_hr_rank=find_col(batters,["hr_leader_rank"]); b_injected=find_col(batters,["mlb_api_injected","hr_leader_injected"]); b_api_found=find_col(batters,["mlb_api_found"])
 
 def pitcher_risk(live):
     return clamp(.45*scale01(live.get("hr9",1.1),.3,2.2)+.30*scale01(live.get("era",4.2),2.5,6.0)+.25*scale01(live.get("whip",1.3),.9,1.7),0,1)
@@ -354,7 +431,7 @@ def batter_metrics(row):
         form_score=power*.55+contact*.25+laser*.20
     if season_hr>0: form_score=clamp(form_score*.85+scale01(season_hr,5,25)*.15,0,1)
     form="🔥 Hot" if form_score>=.70 or power>=.78 or laser>=.78 else "✅ Good" if form_score>=.50 or power>=.58 or laser>=.58 else "⚠️ Neutral" if form_score>=.35 else "❄️ Cold"
-    return {"Power":round(power,2),"Contact":round(contact,2),"Laser":round(laser,2),"Form Score":round(form_score,2),"Form":form,"estSLG":round(est_slg,3),"estwOBA":round(est_woba,3),"estBA":round(est_ba,3),"ISO":round(iso,3),"Season HR":int(season_hr) if season_hr else "N/A","HR Rank":int(hr_rank) if hr_rank!=999 else "N/A","Data Source":"MLB HR Leader Injected" if injected else "batters.csv"}
+    return {"Power":round(power,2),"Contact":round(contact,2),"Laser":round(laser,2),"Form Score":round(form_score,2),"Form":form,"estSLG":round(est_slg,3),"estwOBA":round(est_woba,3),"estBA":round(est_ba,3),"ISO":round(iso,3),"Season HR":int(season_hr) if season_hr else "N/A","HR Rank":int(hr_rank) if hr_rank!=999 else "N/A","Data Source":"MLB API Injected" if injected else ("batters.csv + MLB API" if api_found else "batters.csv")}
 
 def auto_matchup_edge(m,live,park_edge,weather_edge,lineup_edge):
     pitcher_hr=pitcher_risk(live); pitcher_k=scale01(live.get("k_rate",.22),.16,.34)
@@ -406,7 +483,7 @@ df=df.sort_values("Dinger Score",ascending=False).reset_index(drop=True)
 parlay_pool=df[df["Parlay Eligible"]=="Yes"].copy().sort_values("Dinger Score",ascending=False).reset_index(drop=True)
 top_hr_pick=parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 best_matchup_pick=parlay_pool.sort_values("Auto Matchup Edge",ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge",ascending=False).head(1)
-top_hr_leaders=df[df["Data Source"]=="MLB HR Leader Injected"].sort_values("Dinger Score",ascending=False).head(20)
+top_hr_leaders=df[df["Data Source"].astype(str).str.contains("MLB API",na=False)].sort_values("Dinger Score",ascending=False).head(30)
 
 k_rows=[]
 for g in games:
@@ -517,7 +594,7 @@ with tab0:
     st.markdown(pick_card("⚔️ Best Batter vs Pitcher Matchup",best_matchup_pick),unsafe_allow_html=True)
     st.markdown("### 📌 Top 10 HR Board")
     st.markdown(render(df.head(10),["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source"]),unsafe_allow_html=True)
-    st.markdown("### 👑 Injected MLB HR Leaders Found in Today’s Matchups")
+    st.markdown("### 👑 Injected / Updated MLB Players Found in Today’s Matchups")
     st.markdown(render(top_hr_leaders,["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Season HR","HR Rank","Data Source"]),unsafe_allow_html=True)
 with tab1:
     st.subheader("📱 Mobile-Friendly Best HR Plays")
@@ -552,7 +629,7 @@ with tab5:
     st.subheader("🔎 Pick Breakdown / Reasons")
     st.markdown(render(df.head(80),breakdown_cols),unsafe_allow_html=True)
 with tab6:
-    st.write("Players scored:",len(df)); st.write("Dynamic parlay pool players:",len(parlay_pool)); st.write("Pitchers scored:",len(k_df)); st.write("Games loaded:",len(games_all)); st.write("Active/upcoming games shown:",len(games)); st.write("Batters CSV rows after HR leader injection:",len(batters)); st.write("MLB HR leaders pulled:",len(hr_leaders_df))
+    st.write("Players scored:",len(df)); st.write("Dynamic parlay pool players:",len(parlay_pool)); st.write("Pitchers scored:",len(k_df)); st.write("Games loaded:",len(games_all)); st.write("Active/upcoming games shown:",len(games)); st.write("Batters CSV rows after HR leader injection:",len(batters)); st.write("MLB hitters pulled:",len(mlb_players_df))
     st.write("Game statuses:"); st.dataframe(pd.DataFrame(games_all)[["away","home","park","status"]] if games_all else pd.DataFrame(),use_container_width=True)
     st.write("Detected columns:")
     st.json({"pa":b_pa,"bip":b_bip,"ba":b_ba,"est_ba":b_est_ba,"slg":b_slg,"est_slg":b_est_slg,"woba":b_woba,"est_woba":b_est_woba,"barrel":b_barrel,"hard_hit":b_hard,"iso":b_iso,"recent":b_recent,"season_hr":b_season_hr,"hr_rank":b_hr_rank,"team":b_team})
