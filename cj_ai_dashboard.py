@@ -872,82 +872,74 @@ def generate_top_hr_combo(pool, legs=3):
 
     return gen_df, combo
     
-with tab4:
-    st.subheader("🧾 Dynamic HR Parlays")
+st.markdown("### 🎰 Clickable Smart HR Parlay Generator")
 
-    st.markdown("<div class='note'>Generator builds 3-leg HR combos using high HR %, strong Dinger Score, strong matchup edge, and different games when possible.</div>", unsafe_allow_html=True)
+if "hr_combo_clicks" not in st.session_state:
+    st.session_state.hr_combo_clicks = 0
 
-    st.markdown("### 🎰 Clickable Smart HR Parlay Generator")
+if st.button("Generate Different Smart 3-Leg HR Parlay"):
+    st.session_state.hr_combo_clicks += 1
 
-    if st.button("Generate Smart 3-Leg HR Parlay"):
-        generator_pool = parlay_pool.copy()
+generator_pool = parlay_pool.copy()
 
-        generator_pool["Combo Score"] = (
-            generator_pool["HR %"].apply(safe_float) * 0.45
-            + generator_pool["Dinger Score"].apply(safe_float) * 0.30
-            + generator_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.25
-        )
+if not generator_pool.empty:
+    generator_pool["Combo Score"] = (
+        generator_pool["HR %"].apply(safe_float) * 0.45
+        + generator_pool["Dinger Score"].apply(safe_float) * 0.30
+        + generator_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.25
+    )
 
-        generator_pool = generator_pool.sort_values("Combo Score", ascending=False)
+    generator_pool = generator_pool.sort_values("Combo Score", ascending=False).reset_index(drop=True)
 
+    combos = []
+    used_sets = set()
+
+    for start in range(0, min(len(generator_pool), 30)):
         selected = []
         used_matchups = set()
 
-        for _, r in generator_pool.iterrows():
+        pool_rotated = pd.concat([
+            generator_pool.iloc[start:],
+            generator_pool.iloc[:start]
+        ]).reset_index(drop=True)
+
+        for _, r in pool_rotated.iterrows():
             if len(selected) >= 3:
                 break
-
             if r["Matchup"] in used_matchups:
                 continue
 
             selected.append(r)
             used_matchups.add(r["Matchup"])
 
-        if len(selected) < 3:
-            for _, r in generator_pool.iterrows():
-                if len(selected) >= 3:
-                    break
-
-                if r["Player"] not in [x["Player"] for x in selected]:
-                    selected.append(r)
-
         if len(selected) == 3:
-            gen_df = pd.DataFrame(selected)
+            names = tuple(sorted([x["Player"] for x in selected]))
+            if names not in used_sets:
+                used_sets.add(names)
+                combos.append(pd.DataFrame(selected))
 
-            combo_chance = round(
-                (safe_float(gen_df.iloc[0]["HR %"]) / 100)
-                * (safe_float(gen_df.iloc[1]["HR %"]) / 100)
-                * (safe_float(gen_df.iloc[2]["HR %"]) / 100)
-                * 100,
-                2
-            )
+    if combos:
+        combo_index = st.session_state.hr_combo_clicks % len(combos)
+        gen_df = combos[combo_index]
 
-            st.success(f"Generated Smart 3-Leg HR Combo | Model Combo Confidence: {combo_chance}%")
+        combo_chance = round(
+            (safe_float(gen_df.iloc[0]["HR %"]) / 100)
+            * (safe_float(gen_df.iloc[1]["HR %"]) / 100)
+            * (safe_float(gen_df.iloc[2]["HR %"]) / 100)
+            * 100,
+            2
+        )
 
-            st.markdown(render(
-                gen_df,
-                ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Combo Score"]
-            ), unsafe_allow_html=True)
-        else:
-            st.warning("Not enough eligible players to generate a 3-leg HR parlay.")
+        st.success(f"Smart HR Combo #{combo_index + 1} of {len(combos)} | Model Combo Confidence: {combo_chance}%")
 
-    st.markdown("### 💣 Smart HR Parlays")
-    st.markdown(render(parlay_hr), unsafe_allow_html=True)
-
-    st.markdown("### ✅ Hit Parlays")
-    st.markdown(render(parlay_hit), unsafe_allow_html=True)
-
-    st.markdown("### 🧱 Total Bases Parlays")
-    st.markdown(render(parlay_tb), unsafe_allow_html=True)
-
-    st.markdown("### 🏃 RBI Parlays")
-    st.markdown(render(parlay_rbi), unsafe_allow_html=True)
-
-    st.markdown("### 🚀 Laser Parlays")
-    st.markdown(render(parlay_laser), unsafe_allow_html=True)
-
-    st.markdown("### 🎯 Strikeout Parlays")
-    st.markdown(render(parlay_k), unsafe_allow_html=True)
+        st.markdown(render(
+            gen_df,
+            ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Combo Score"]
+        ), unsafe_allow_html=True)
+    else:
+        st.warning("Not enough eligible players to generate different 3-leg HR combos.")
+else:
+    st.warning("No eligible players available.")
     
 with tab5:
     st.subheader("🔎 Pick Breakdown / Reasons")
