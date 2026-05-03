@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="AON BETS HR MODEL ⚾️ 💣", layout="wide")
+st.set_page_config(page_title="AON WORLD BETS HR MODEL ⚾️💣", layout="wide")
 
 REFRESH_SECONDS = 300
 if "last_refresh" not in st.session_state:
@@ -32,8 +32,8 @@ st.markdown("""
 
 st.markdown("""
 <div class='hero'>
-<h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Clean Final • All MLB Players Injected • Season HR For Everyone • Auto Matchup Edge • Smart HR Generator • Dynamic Parlays • Strikeouts</p>
+<h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
+<p>All MLB Players Injected • Season HR For Everyone • Best K Pitcher • Best 8 Hits • HR Combos 2-6 Legs • Dynamic Parlays</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -856,6 +856,77 @@ def build_rotating_hr_combos(pool):
                 combos.append(pd.DataFrame(selected))
     return combos
 
+
+def build_hr_combos_by_legs(pool, legs=3, max_combos=6):
+    """
+    Builds rotating HR combos by leg count.
+    Uses HR %, Dinger Score, Matchup Edge, Season HR, and avoids same-game overlap when possible.
+    """
+    if pool is None or pool.empty:
+        return []
+
+    generator_pool = pool.copy()
+    generator_pool["Combo Score"] = (
+        generator_pool["HR %"].apply(safe_float) * 0.45
+        + generator_pool["Dinger Score"].apply(safe_float) * 0.30
+        + generator_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.25
+        + generator_pool["Season HR"].apply(safe_float) * 0.10
+    )
+    generator_pool = generator_pool.sort_values("Combo Score", ascending=False).reset_index(drop=True)
+
+    combos = []
+    used_sets = set()
+
+    for start in range(0, min(len(generator_pool), 50)):
+        selected = []
+        used_matchups = set()
+        pool_rotated = pd.concat([generator_pool.iloc[start:], generator_pool.iloc[:start]]).reset_index(drop=True)
+
+        for _, r in pool_rotated.iterrows():
+            if len(selected) >= legs:
+                break
+            if r["Matchup"] in used_matchups:
+                continue
+            selected.append(r)
+            used_matchups.add(r["Matchup"])
+
+        if len(selected) < legs:
+            for _, r in pool_rotated.iterrows():
+                if len(selected) >= legs:
+                    break
+                if r["Player"] not in [x["Player"] for x in selected]:
+                    selected.append(r)
+
+        if len(selected) == legs:
+            names = tuple(sorted([x["Player"] for x in selected]))
+            if names not in used_sets:
+                used_sets.add(names)
+                combos.append(pd.DataFrame(selected))
+
+        if len(combos) >= max_combos:
+            break
+
+    return combos
+
+def combo_confidence(combo_df):
+    if combo_df is None or combo_df.empty:
+        return 0
+    return round((combo_df["HR %"].apply(safe_float) / 100).prod() * 100, 4)
+
+def combo_summary_table(combos, leg_label):
+    rows = []
+    for i, c in enumerate(combos, 1):
+        row = {
+            "Combo": f"{leg_label} Combo #{i}",
+            "Model Combo Confidence": combo_confidence(c),
+            "Avg HR %": round(c["HR %"].apply(safe_float).mean(), 1),
+            "Avg Dinger Score": round(c["Dinger Score"].apply(safe_float).mean(), 1),
+        }
+        for j, (_, r) in enumerate(c.iterrows(), 1):
+            row[f"Leg {j}"] = f"{r['Player']} ({r['HR %']}%)"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
 parlay_hr = smart_hr_parlays(parlay_pool)
 parlay_hit = tier_parlays(parlay_pool, "Hit %", "Hit")
 parlay_tb = tier_parlays(parlay_pool, "TB %", "TB")
@@ -931,9 +1002,28 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mob
 with tab0:
     st.subheader("🏆 Top Picks of the Slate")
     st.markdown(pick_card("💣 Top HR Pick of the Slate", top_hr_pick), unsafe_allow_html=True)
-    st.markdown(pick_card("⚔️ Best Batter vs Pitcher Matchup", best_matchup_pick), unsafe_allow_html=True)
+
+    best_k_pitcher = k_df.head(1) if not k_df.empty else pd.DataFrame()
+    if not best_k_pitcher.empty:
+        k = best_k_pitcher.iloc[0]
+        st.markdown(f"""
+        <div class='card'>
+            <h2>🎯 Best Pitcher for K's</h2>
+            <h3>{k['Pitcher']} vs {k['Opponent']}</h3>
+            <p><b>Best K%:</b> {k['Best K%']}% | <b>Projected Ks:</b> {k['Projected Ks']} | <b>Grade:</b> {k['Grade']}</p>
+            <p><b>K/9:</b> {k['K/9']} | <b>ERA:</b> {k['ERA']} | <b>WHIP:</b> {k['WHIP']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='card'><h2>🎯 Best Pitcher for K's</h2><p>No K picks available.</p></div>", unsafe_allow_html=True)
+
+    st.markdown("### ✅ Best 8 Players for Hits")
+    best_hits_8 = parlay_pool.sort_values("Hit %", ascending=False).head(8) if not parlay_pool.empty else df.sort_values("Hit %", ascending=False).head(8)
+    st.markdown(render(best_hits_8, ["Player","Team","Hit %","Grade","Pitcher","Park","Game Status","Lineup","Order","Season HR","Data Source"]), unsafe_allow_html=True)
+
     st.markdown("### 📌 Top 10 HR Board")
     st.markdown(render(df.head(10), ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source"]), unsafe_allow_html=True)
+
     st.markdown("### 👑 Injected MLB Players in Today’s Matchups")
     st.markdown(render(top_mlb_api, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Season HR","Data Source"]), unsafe_allow_html=True)
 
@@ -952,7 +1042,7 @@ with tab3:
 
 with tab4:
     st.subheader("🧾 Dynamic HR Parlays")
-    st.markdown("<div class='note'>Generator builds rotating 3-leg HR combos using HR %, Dinger Score, Matchup Edge, Season HR, and different games when possible.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>HR combos use HR %, Dinger Score, Matchup Edge, Season HR, and avoid same-game overlap when possible. Larger HR combos are higher risk.</div>", unsafe_allow_html=True)
 
     st.markdown("### 🎰 Clickable Smart HR Parlay Generator")
 
@@ -962,23 +1052,36 @@ with tab4:
     if st.button("Generate Different Smart 3-Leg HR Parlay"):
         st.session_state.hr_combo_clicks += 1
 
-    combos = build_rotating_hr_combos(parlay_pool)
+    combos = build_hr_combos_by_legs(parlay_pool, legs=3, max_combos=12)
     if combos:
         combo_index = st.session_state.hr_combo_clicks % len(combos)
         gen_df = combos[combo_index]
+        combo_chance = combo_confidence(gen_df)
 
-        combo_chance = round(
-            (safe_float(gen_df.iloc[0]["HR %"]) / 100)
-            * (safe_float(gen_df.iloc[1]["HR %"]) / 100)
-            * (safe_float(gen_df.iloc[2]["HR %"]) / 100)
-            * 100,
-            2
-        )
-
-        st.success(f"Smart HR Combo #{combo_index + 1} of {len(combos)} | Model Combo Confidence: {combo_chance}%")
+        st.success(f"Smart HR 3-Leg Combo #{combo_index + 1} of {len(combos)} | Model Combo Confidence: {combo_chance}%")
         st.markdown(render(gen_df, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source","Combo Score"]), unsafe_allow_html=True)
     else:
         st.warning("Not enough eligible players to generate different 3-leg HR combos.")
+
+    st.markdown("### 🛡️ Best 2 HR Combos")
+    combos_2 = build_hr_combos_by_legs(parlay_pool, legs=2, max_combos=2)
+    st.markdown(render(combo_summary_table(combos_2, "2-Leg HR")), unsafe_allow_html=True)
+
+    st.markdown("### 💣 Best 3 HR Combos")
+    combos_3 = build_hr_combos_by_legs(parlay_pool, legs=3, max_combos=3)
+    st.markdown(render(combo_summary_table(combos_3, "3-Leg HR")), unsafe_allow_html=True)
+
+    st.markdown("### 🔥 Best 4 HR Combos")
+    combos_4 = build_hr_combos_by_legs(parlay_pool, legs=4, max_combos=4)
+    st.markdown(render(combo_summary_table(combos_4, "4-Leg HR")), unsafe_allow_html=True)
+
+    st.markdown("### 🚀 Best 5 HR Combos")
+    combos_5 = build_hr_combos_by_legs(parlay_pool, legs=5, max_combos=5)
+    st.markdown(render(combo_summary_table(combos_5, "5-Leg HR")), unsafe_allow_html=True)
+
+    st.markdown("### ☢️ Best 6 HR Combos")
+    combos_6 = build_hr_combos_by_legs(parlay_pool, legs=6, max_combos=6)
+    st.markdown(render(combo_summary_table(combos_6, "6-Leg HR")), unsafe_allow_html=True)
 
     st.markdown("### 💣 Smart HR Parlays")
     st.markdown(render(parlay_hr), unsafe_allow_html=True)
