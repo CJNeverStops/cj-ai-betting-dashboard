@@ -24,13 +24,15 @@ st.markdown("""
 .ai-table th { background:#111827; padding:9px; text-align:left; white-space:nowrap; }
 .ai-table td { padding:8px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
 .note { background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px; color:#cbd5e1; }
+.card { background:#0b1220; border:1px solid #1f2937; border-radius:18px; padding:16px; margin-bottom:14px; }
+.card h2 { margin-top:0; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON BETS HR MODEL ⚾️ 💣</h1>
-<p>Auto Matchup Edge • Dynamic Parlays • Removes Started/Finished Games • Pitcher Risk • Park/Weather • Strikeouts</p>
+<p>Top HR Pick • Best Batter vs Pitcher Matchup • Daily HR Tracker • Dynamic Parlays • Strikeouts</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -157,10 +159,7 @@ def color_grade(g):
 
 def is_game_available_for_parlays(status):
     s = str(status).lower().strip()
-    bad = [
-        "in progress", "live", "final", "game over", "completed early",
-        "delayed", "suspended", "postponed", "cancelled"
-    ]
+    bad = ["in progress","live","final","game over","completed early","delayed","suspended","postponed","cancelled"]
     return not any(x in s for x in bad)
 
 STADIUM_DATA={
@@ -277,6 +276,25 @@ def get_lineups(game_pk):
         return out
 
     return {"away":side("away"),"home":side("home")}
+
+@st.cache_data(ttl=300)
+def hr_tracker_for_game(game_pk):
+    try:
+        data=requests.get(f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live",timeout=20).json()
+    except:
+        return {}
+
+    out={}
+    box=data.get("liveData",{}).get("boxscore",{}).get("teams",{})
+    for side in ["away","home"]:
+        players=box.get(side,{}).get("players",{}) or {}
+        for _,p in players.items():
+            name=p.get("person",{}).get("fullName","")
+            batting=p.get("stats",{}).get("batting",{})
+            hrs=safe_float(batting.get("homeRuns",0),0)
+            if name:
+                out[norm(name)] = int(hrs)
+    return out
 
 @st.cache_data(ttl=86400)
 def build_roster():
@@ -436,15 +454,29 @@ def auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge):
     )
 
     edge = clamp(raw,0,1)
-
     note = (
         f"auto edge from batter power + pitcher HR risk + K risk; "
         f"pitcher hand {live.get('hand','R')} • K risk {round(pitcher_k,2)}"
     )
-
     return edge, note
 
-def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_status, order="—", lineup="Projected"):
+def hr_tracker_label(player_name, game_pk, game_status):
+    tracker = hr_tracker_for_game(game_pk)
+    hrs = tracker.get(norm(player_name), 0)
+    s = str(game_status).lower()
+
+    if hrs >= 1:
+        return f"✅ HR ({hrs})"
+
+    if "final" in s or "game over" in s or "completed" in s:
+        return "❌ No HR"
+
+    if "in progress" in s or "live" in s:
+        return "⏳ Live - 0 HR"
+
+    return "🕒 Pending"
+
+def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_status, game_pk, order="—", lineup="Projected"):
     b=find_player(batters,player_name)
     if b is None:
         return None
@@ -493,10 +525,12 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
     rbi_prob=clamp(.12 + (m["Power"]*.43 + m["Laser"]*.17 + pr*.25 + me*.15)*.42, .06, .62)
     laser_prob=clamp(.15 + m["Laser"]*.62 + me*.08, .10, .82)
 
+    tracker = hr_tracker_label(player_name, game_pk, game_status)
+
     reasons=(
         f"{m['Form']} • Auto Matchup Edge {round(me,2)} ({me_note}) • "
         f"Matchup: {matchup} vs {pitcher_name} • "
-        f"Game Status: {game_status} • "
+        f"Game Status: {game_status} • HR Tracker: {tracker} • "
         f"Pitcher Risk {round(pr,2)} HR/9 {round(live['hr9'],2)} ERA {live['era']} WHIP {live['whip']} • "
         f"Park: {park} {park_note(park_factor)} ({park_factor}) • "
         f"Weather: {weather['note']} {weather['temp']}°F wind {weather['wind']}mph {weather['dir']} • "
@@ -510,6 +544,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Pitcher":pitcher_name,
         "Park":park,
         "Game Status":game_status,
+        "HR Tracker":tracker,
         "Parlay Eligible":"Yes" if is_game_available_for_parlays(game_status) else "No",
         "Lineup":lineup,
         "Order":order,
@@ -533,7 +568,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
 
 games_all=get_schedule()
 
-VISIBLE_BAD_STATUSES=["final","game over","completed early","postponed","cancelled"]
+VISIBLE_BAD_STATUSES=["postponed","cancelled"]
 games=[
     g for g in games_all
     if not any(x in str(g.get("status","")).lower() for x in VISIBLE_BAD_STATUSES)
@@ -543,37 +578,41 @@ rows=[]
 for g in games:
     matchup=f'{g["away"]} @ {g["home"]}'
     status=g.get("status","")
-    lu=get_lineups(g["gamePk"])
+    game_pk=g.get("gamePk")
+    lu=get_lineups(game_pk)
 
     if g["home_p"]:
         if lu["away"]:
             for h in lu["away"]:
-                r=score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, h["order"], "Final")
+                r=score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _,b in batters[batters["_team"]==normalize_team(g["away"])].iterrows():
-                r=score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status)
+                r=score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk)
                 if r: rows.append(r)
 
     if g["away_p"]:
         if lu["home"]:
             for h in lu["home"]:
-                r=score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, h["order"], "Final")
+                r=score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk, h["order"], "Final")
                 if r: rows.append(r)
         else:
             for _,b in batters[batters["_team"]==normalize_team(g["home"])].iterrows():
-                r=score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status)
+                r=score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk)
                 if r: rows.append(r)
 
 df=pd.DataFrame(rows)
 if df.empty:
-    st.warning("No active/upcoming game rows created. Probable pitchers/lineups may not be posted yet.")
+    st.warning("No game rows created. Probable pitchers/lineups may not be posted yet.")
     st.stop()
 
 df=df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
 parlay_pool=df[df["Parlay Eligible"]=="Yes"].copy()
 parlay_pool=parlay_pool.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+
+top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
+best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 
 k_rows=[]
 for g in games:
@@ -682,9 +721,9 @@ parlay_rbi=tier_parlays(parlay_pool,"RBI %","RBI")
 parlay_laser=tier_parlays(parlay_pool,"Laser %","Laser")
 parlay_k=tier_parlays(k_df,"Best K%","K","Pitcher") if not k_df.empty else pd.DataFrame()
 
-mobile_cols=["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order"]
-full_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser"]
-breakdown_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Reasons"]
+mobile_cols=["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Status","HR Tracker","Parlay Eligible","Lineup","Order"]
+full_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","HR Tracker","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser"]
+breakdown_cols=["Player","Team","Matchup","Pitcher","Park","Game Status","HR Tracker","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Reasons"]
 
 def render(data, cols=None):
     if data is None or data.empty:
@@ -711,6 +750,8 @@ def render(data, cols=None):
                 style="background:rgba(34,197,94,.38);font-weight:900;" if safe_float(v)>=28 else "background:rgba(59,130,246,.28);font-weight:900;" if safe_float(v)>=24 else "background:rgba(234,179,8,.22);font-weight:900;"
             elif c=="Parlay Eligible":
                 style="background:rgba(34,197,94,.25);font-weight:900;" if str(v)=="Yes" else "background:rgba(239,68,68,.22);font-weight:900;"
+            elif c=="HR Tracker":
+                style="background:rgba(34,197,94,.25);font-weight:900;" if "✅" in str(v) else "background:rgba(239,68,68,.18);font-weight:900;" if "❌" in str(v) else "background:rgba(234,179,8,.16);font-weight:900;"
             elif "%" in c or c in ["Avg Model %","Model Combo Confidence","Avg HR %"]:
                 style="background:rgba(34,197,94,.25);" if safe_float(v)>=60 else "background:rgba(234,179,8,.18);" if safe_float(v)>=35 else "background:rgba(239,68,68,.15);"
             elif c=="Form":
@@ -726,7 +767,28 @@ def render(data, cols=None):
     html+="</table></div>"
     return html
 
-tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
+def pick_card(title, data):
+    if data is None or data.empty:
+        return f"<div class='card'><h2>{title}</h2><p>No pick available.</p></div>"
+    r=data.iloc[0]
+    return f"""
+    <div class='card'>
+        <h2>{title}</h2>
+        <h3>{r['Player']} — {r['Team']}</h3>
+        <p><b>HR %:</b> {r['HR %']}% | <b>Dinger Score:</b> {r['Dinger Score']} | <b>Grade:</b> {r['Grade']} {r['Badge']}</p>
+        <p><b>Matchup:</b> {r['Matchup']} vs {r['Pitcher']}</p>
+        <p><b>Auto Matchup Edge:</b> {r['Auto Matchup Edge']} | <b>Park:</b> {r['Park']} | <b>Tracker:</b> {r['HR Tracker']}</p>
+    </div>
+    """
+
+tab0,tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
+
+with tab0:
+    st.subheader("🏆 Top Picks of the Slate")
+    st.markdown(pick_card("💣 Top HR Pick of the Slate", top_hr_pick), unsafe_allow_html=True)
+    st.markdown(pick_card("⚔️ Best Batter vs Pitcher Matchup", best_matchup_pick), unsafe_allow_html=True)
+    st.markdown("### 📌 Top 10 HR Tracker Board")
+    st.markdown(render(df.head(10), ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","HR Tracker","Auto Matchup Edge"]), unsafe_allow_html=True)
 
 with tab1:
     st.subheader("📱 Mobile-Friendly Best HR Plays")
