@@ -326,7 +326,7 @@ def get_lineups(game_pk):
             p = players.get(f"ID{pid}", {})
             name = p.get("person", {}).get("fullName", "")
             if name:
-                out.append({"name": name, "order": idx})
+                out.append({"name": name, "id": pid, "order": idx})
         return out
 
     return {"away": side("away"), "home": side("home")}
@@ -348,7 +348,7 @@ def build_roster():
         for p in roster:
             name = p.get("person", {}).get("fullName", "")
             if name:
-                out.append({"name": name, "team": team, "_norm": norm(name)})
+                out.append({"name": name, "team": team, "_norm": norm(name), "player_id": p.get("person", {}).get("id", None)})
     return pd.DataFrame(out)
 
 @st.cache_data(ttl=1800)
@@ -383,6 +383,35 @@ def pitcher_live(pid):
         }
     except Exception:
         return {"k_rate":.22,"k9":8.0,"era":4.20,"whip":1.30,"hr9":1.10,"hand":"R"}
+
+
+@st.cache_data(ttl=1800)
+def hitter_live_season(pid):
+    """
+    Pull exact current season hitter totals by MLB player ID.
+    This fixes Season HR showing 0 when CSV/name merge misses a player.
+    """
+    if not pid:
+        return {"season_hr": None}
+
+    try:
+        season = time.strftime("%Y")
+        url = f"https://statsapi.mlb.com/api/v1/people/{int(float(pid))}/stats?stats=season&group=hitting&season={season}"
+        data = requests.get(url, timeout=20).json()
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return {"season_hr": None}
+
+        stat = splits[0].get("stat", {})
+        return {
+            "season_hr": int(safe_float(stat.get("homeRuns", 0), 0)),
+            "pa": safe_float(stat.get("plateAppearances", 0), 0),
+            "slg": safe_float(stat.get("slg", stat.get("sluggingPercentage", 0)), 0),
+            "avg": safe_float(stat.get("avg", 0), 0)
+        }
+    except Exception:
+        return {"season_hr": None}
+
 
 @st.cache_data(ttl=3600)
 def get_all_mlb_hitters():
@@ -451,6 +480,7 @@ batters["_name"] = make_name(batters)
 batters["mlb_api_injected"] = False
 
 roster = build_roster()
+roster_id_lookup = dict(zip(roster["_norm"], roster["player_id"])) if not roster.empty and "player_id" in roster.columns else {}
 
 b_team_start = find_col(batters, ["team","player_team","bat_team","team_name","club","team_abbrev","team_abbr"])
 if b_team_start:
@@ -651,12 +681,26 @@ def auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge):
     note = f"auto edge from batter power + pitcher HR risk + K risk; pitcher hand {live.get('hand','R')} • K risk {round(pitcher_k,2)}"
     return edge, note
 
-def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_status, game_pk, order="—", lineup="Projected"):
+def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_status, game_pk, order="—", lineup="Projected", batter_id=None):
     b = find_player(batters, player_name)
     if b is None:
         return None
 
     m = batter_metrics(b)
+
+    # Exact MLB season HR override by player ID.
+    # Priority: lineup ID -> CSV player_id -> MLB roster ID -> name-merge fallback already in m.
+    if batter_id is None:
+        id_col = find_col(pd.DataFrame([b]), ["player_id", "id", "mlb_id"])
+        if id_col:
+            batter_id = b.get(id_col, None)
+    if batter_id is None:
+        batter_id = roster_id_lookup.get(norm(player_name), None)
+
+    live_batter = hitter_live_season(batter_id)
+    if live_batter.get("season_hr") is not None:
+        m["Season HR"] = int(live_batter["season_hr"])
+
     live = pitcher_live(pitcher_id)
     pr = pitcher_risk(live)
 
@@ -760,21 +804,21 @@ for g in games:
     if g["home_p"]:
         if lu["away"]:
             for h in lu["away"]:
-                r = score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk, h["order"], "Final")
+                r = score_row(h["name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk, h["order"], "Final", h.get("id"))
                 if r: rows.append(r)
         else:
             for _, b in batters[batters["_team"] == normalize_team(g["away"])].iterrows():
-                r = score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk)
+                r = score_row(b["_name"], normalize_team(g["away"]), matchup, g["home_p"], g["home_p_id"], g["park"], status, game_pk, batter_id=b.get("player_id", None))
                 if r: rows.append(r)
 
     if g["away_p"]:
         if lu["home"]:
             for h in lu["home"]:
-                r = score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk, h["order"], "Final")
+                r = score_row(h["name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk, h["order"], "Final", h.get("id"))
                 if r: rows.append(r)
         else:
             for _, b in batters[batters["_team"] == normalize_team(g["home"])].iterrows():
-                r = score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk)
+                r = score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk, batter_id=b.get("player_id", None))
                 if r: rows.append(r)
 
 df = pd.DataFrame(rows)
@@ -1298,6 +1342,7 @@ with tab6:
     st.write("Upcoming/non-final games shown:", len(games))
     st.write("Original batters.csv rows + injected MLB players:", len(batters))
     st.write("All MLB hitters pulled:", len(mlb_players))
+    st.write("Season HR fix:", "Uses MLB player ID live season hitting stats when available")
     st.write("Missing MLB players injected:", mlb_injected_count)
     st.write("Game statuses:")
     st.dataframe(pd.DataFrame(games_all)[["away","home","park","status"]] if games_all else pd.DataFrame(), use_container_width=True)
