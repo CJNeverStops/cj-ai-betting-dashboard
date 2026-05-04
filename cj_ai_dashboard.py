@@ -1251,6 +1251,110 @@ def combo_summary_table(combos, leg_label):
     return pd.DataFrame(rows)
 
 
+
+def clickable_smart_3_leg_builder(pool, click_index=0):
+    """
+    Clickable 3-leg HR builder.
+    Smart logic:
+    - prioritizes good grades
+    - avoids same game when possible
+    - favors power, form, weak pitchers, park/weather, season HR
+    - rotates to a different combo each click
+    """
+    if pool is None or pool.empty:
+        return pd.DataFrame()
+
+    p = pool.copy()
+
+    p["Builder Score"] = (
+        p["HR %"].apply(safe_float) * 0.30
+        + p["Dinger Score"].apply(safe_float) * 0.18
+        + p["Power"].apply(safe_float) * 30 * 0.18
+        + p.get("Form Score", pd.Series([0.5] * len(p))).apply(safe_float) * 25 * 0.12
+        + p["Pitcher Risk"].apply(safe_float) * 25 * 0.10
+        + p["Park Edge"].apply(safe_float) * 20 * 0.05
+        + p["Weather Edge"].apply(safe_float) * 20 * 0.05
+        + p["Season HR"].apply(safe_float) * 0.02
+    )
+
+    grade_bonus = {
+        "S+": 5.0,
+        "S": 4.0,
+        "A+": 3.0,
+        "A": 2.0,
+        "B": 0.75,
+        "C": 0.25,
+        "D": 0.0,
+    }
+
+    p["Builder Score"] = p.apply(
+        lambda r: safe_float(r["Builder Score"]) + grade_bonus.get(str(r.get("Grade", "")), 0),
+        axis=1
+    )
+
+    p = p.sort_values("Builder Score", ascending=False).reset_index(drop=True)
+
+    combos = []
+    used_sets = set()
+
+    # Different smart styles so button can rotate.
+    styles = [
+        ("Best Overall", p),
+        ("Elite + Hot + Value", p.sort_values(["Grade","Form Score","Builder Score"], ascending=[True, False, False]) if "Form Score" in p.columns else p),
+        ("Power + Weak Pitcher", p.sort_values(["Power","Pitcher Risk","Builder Score"], ascending=[False, False, False])),
+        ("Weather/Park Boost", p.assign(EnvScore=p["Weather Edge"].apply(safe_float)+p["Park Edge"].apply(safe_float)).sort_values(["EnvScore","Builder Score"], ascending=[False, False])),
+        ("Season HR + Matchup", p.sort_values(["Season HR","Auto Matchup Edge","Builder Score"], ascending=[False, False, False])),
+        ("High Probability", p.sort_values(["HR %","Builder Score"], ascending=[False, False])),
+    ]
+
+    for style_name, style_pool in styles:
+        for start in range(0, min(len(style_pool), 20)):
+            selected = []
+            used_matchups = set()
+            used_players = set()
+
+            rotated = pd.concat([style_pool.iloc[start:], style_pool.iloc[:start]]).reset_index(drop=True)
+
+            for _, r in rotated.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                if r["Matchup"] in used_matchups:
+                    continue
+
+                selected.append(r)
+                used_players.add(r["Player"])
+                used_matchups.add(r["Matchup"])
+
+            # fallback if not enough different games
+            if len(selected) < 3:
+                for _, r in rotated.iterrows():
+                    if len(selected) >= 3:
+                        break
+                    if r["Player"] in used_players:
+                        continue
+                    selected.append(r)
+                    used_players.add(r["Player"])
+
+            if len(selected) == 3:
+                names = tuple(sorted([x["Player"] for x in selected]))
+                if names not in used_sets:
+                    used_sets.add(names)
+                    combo = pd.DataFrame(selected)
+                    combo["Builder Logic"] = style_name
+                    combos.append(combo)
+
+    if not combos:
+        return pd.DataFrame()
+
+    return combos[click_index % len(combos)]
+
+def builder_combo_confidence(combo_df):
+    if combo_df is None or combo_df.empty:
+        return 0
+    return round((combo_df["HR %"].apply(safe_float) / 100).prod() * 100, 4)
+
 parlay_hr = smart_hr_parlays(parlay_pool)
 parlay_hit = tier_parlays(parlay_pool, "Hit %", "Hit")
 parlay_tb = tier_parlays(parlay_pool, "TB %", "TB")
@@ -1689,6 +1793,29 @@ with tab4:
         ), unsafe_allow_html=True)
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
+
+    st.markdown("### 🎰 Clickable Smart 3-Leg HR Parlay Builder")
+
+    if "smart_builder_clicks" not in st.session_state:
+        st.session_state.smart_builder_clicks = 0
+
+    if st.button("Generate Smart 3-Leg HR Bet Combo"):
+        st.session_state.smart_builder_clicks += 1
+
+    builder_combo = clickable_smart_3_leg_builder(parlay_pool, st.session_state.smart_builder_clicks)
+
+    if len(builder_combo) == 3:
+        builder_conf = builder_combo_confidence(builder_combo)
+        logic = builder_combo["Builder Logic"].iloc[0] if "Builder Logic" in builder_combo.columns else "Smart Builder"
+
+        st.success(f"Smart 3-Leg HR Combo | Logic: {logic} | Model Combo Confidence: {builder_conf}%")
+
+        st.markdown(render(
+            builder_combo,
+            ["Player","Team","Grade","Badge","HR %","Dinger Score","Builder Score","Pitcher","Pitcher Risk","Park","Game Weather","Weather Alert","Auto Matchup Edge","Power","Form Score","Season HR","Official HR Rank"]
+        ), unsafe_allow_html=True)
+    else:
+        st.warning("Not enough eligible players for a smart 3-leg HR combo.")
 
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
