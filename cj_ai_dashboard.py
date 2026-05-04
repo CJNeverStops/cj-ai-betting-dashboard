@@ -90,6 +90,31 @@ st.markdown("""
   .tier-weather-good, .tier-weather-mid, .tier-weather-bad { font-size:8px; padding:2px 3px; }
 }
 
+
+.target-card-wrap { display:flex; flex-direction:column; gap:8px; margin:8px 0 18px 0; }
+.target-card { background:#101827; border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px 12px; display:grid; grid-template-columns:34px 1.4fr 70px 70px 70px 95px; gap:8px; align-items:center; color:#f8fafc; }
+.target-rank { color:#fde68a; font-weight:900; font-size:14px; text-align:center; }
+.target-name { font-size:15px; font-weight:900; line-height:1.1; }
+.target-sub { font-size:10px; color:#cbd5e1; margin-top:4px; text-transform:uppercase; letter-spacing:.05em; }
+.target-pill { display:inline-block; border-radius:999px; padding:2px 7px; font-size:10px; font-weight:900; margin-left:5px; }
+.target-pill-s { background:#22c55e; color:#052e16; }
+.target-pill-a { background:#3b82f6; color:#eff6ff; }
+.target-pill-b { background:#a855f7; color:white; }
+.target-pill-c { background:#f59e0b; color:#451a03; }
+.target-num { text-align:right; font-weight:900; color:#22c55e; font-size:14px; }
+.target-label { display:block; color:#94a3b8; font-size:9px; font-weight:800; margin-top:2px; }
+.target-weather-good { background:rgba(34,197,94,.20); color:#86efac; border-radius:8px; padding:5px; text-align:center; font-weight:900; font-size:10px; }
+.target-weather-mid { background:rgba(234,179,8,.20); color:#fde68a; border-radius:8px; padding:5px; text-align:center; font-weight:900; font-size:10px; }
+.target-weather-bad { background:rgba(239,68,68,.20); color:#fca5a5; border-radius:8px; padding:5px; text-align:center; font-weight:900; font-size:10px; }
+@media (max-width:700px) {
+  .target-card { grid-template-columns:26px 1.5fr 52px 42px 45px 62px; gap:5px; padding:8px 7px; }
+  .target-name { font-size:12px; }
+  .target-sub { font-size:8px; }
+  .target-num { font-size:11px; }
+  .target-label { font-size:7px; }
+  .target-weather-good,.target-weather-mid,.target-weather-bad { font-size:8px; padding:4px 3px; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1328,6 +1353,62 @@ def render_ranked_tier_board(data):
     html += "</div>"
     return html
 
+
+def weather_badge_class(alert):
+    alert = str(alert).lower()
+    if "warm" in alert or "boost" in alert or "wind" in alert:
+        return "target-weather-good", "GOOD"
+    if "cold" in alert or "downgrade" in alert:
+        return "target-weather-bad", "BAD"
+    return "target-weather-mid", "NEUTRAL"
+
+def grade_target_class(grade):
+    grade = str(grade)
+    if grade in ["S+", "S"]:
+        return "target-pill-s"
+    if grade in ["A+", "A"]:
+        return "target-pill-a"
+    if grade == "B":
+        return "target-pill-b"
+    return "target-pill-c"
+
+def render_target_cards(data):
+    if data is None or data.empty:
+        return "<div class='note'>No dinger targets available.</div>"
+
+    html = "<div class='target-card-wrap'>"
+
+    for _, r in data.iterrows():
+        rank = r.get("Dinger Rank", "")
+        player = r.get("Player", "")
+        team = r.get("Team", "")
+        grade = r.get("Grade", "")
+        bet = r.get("Bet Badge", r.get("Badge", ""))
+        hrp = r.get("HR %", "")
+        season_hr = r.get("Season HR", 0)
+        power = round(safe_float(r.get("Power", 0)) * 100)
+        park = round(safe_float(r.get("Park Edge", 0)), 2)
+        weather = r.get("Game Weather", "")
+        wcls, wlabel = weather_badge_class(r.get("Weather Alert", ""))
+        gpill = grade_target_class(grade)
+        pitcher = r.get("Pitcher", "")
+
+        html += f"""
+        <div class='target-card'>
+            <div class='target-rank'>{rank}</div>
+            <div>
+                <div class='target-name'>{player} <span class='target-pill {gpill}'>{grade}</span></div>
+                <div class='target-sub'>{team} • {bet} • vs {pitcher}</div>
+            </div>
+            <div class='target-num'>{hrp}%<span class='target-label'>MODEL</span></div>
+            <div class='target-num'>{season_hr}<span class='target-label'>HR</span></div>
+            <div class='target-num'>{power}<span class='target-label'>PWR</span></div>
+            <div class='{wcls}'>{wlabel}<br>{weather}<br>x{park}</div>
+        </div>
+        """
+    html += "</div>"
+    return html
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
@@ -1407,7 +1488,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render_ranked_tier_board(dinger_list.head(25)), unsafe_allow_html=True)
+        st.markdown(render_target_cards(dinger_list.head(15)), unsafe_allow_html=True)
 
         st.markdown("### 📋 Dinger Target Details")
         notepad_cols = [
