@@ -37,6 +37,28 @@ st.markdown("""
 .note { background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px; color:#cbd5e1; }
 .card { background:#0b1220; border:1px solid #1f2937; border-radius:18px; padding:16px; margin-bottom:14px; }
 .card h2 { margin-top:0; }
+
+.dinger-board { background:#090f1a; border:1px solid #263244; border-radius:18px; padding:8px; margin-bottom:18px; }
+.dinger-row { display:grid; grid-template-columns: 34px 1.55fr 88px 68px 90px 88px; gap:8px; align-items:center; padding:10px 8px; border-bottom:1px solid rgba(255,255,255,.08); }
+.dinger-row:last-child { border-bottom:none; }
+.dinger-rank { color:#fef08a; font-weight:900; text-align:center; font-size:14px; }
+.dinger-name { font-size:14px; font-weight:900; color:#f8fafc; line-height:1.1; }
+.dinger-sub { font-size:10px; color:#cbd5e1; text-transform:uppercase; letter-spacing:.06em; margin-top:3px; }
+.dinger-pill { display:inline-block; padding:3px 7px; border-radius:999px; font-size:10px; font-weight:900; margin-left:5px; }
+.dinger-pill-good { background:rgba(34,197,94,.22); color:#86efac; }
+.dinger-pill-mid { background:rgba(234,179,8,.22); color:#fde68a; }
+.dinger-pill-bad { background:rgba(239,68,68,.22); color:#fca5a5; }
+.dinger-num { text-align:right; font-weight:900; color:#22c55e; font-size:14px; }
+.dinger-small { text-align:right; font-size:11px; color:#cbd5e1; line-height:1.15; }
+.dinger-note { font-size:10px; color:#94a3b8; white-space:normal; line-height:1.2; }
+@media (max-width:700px) {
+  .dinger-row { grid-template-columns: 28px 1.4fr 62px 54px 58px 70px; gap:5px; padding:8px 5px; }
+  .dinger-name { font-size:12px; }
+  .dinger-sub, .dinger-note { font-size:9px; }
+  .dinger-num { font-size:12px; }
+  .dinger-small { font-size:9px; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -273,13 +295,13 @@ def get_weather(city, state):
     factor = 1.0
     note = "⚖️ weather neutral"
     if temp >= 80:
-        factor += .05
+        factor += .10
         note = "🔥 warm air boost"
     elif temp <= 55:
-        factor -= .05
+        factor -= .08
         note = "❄️ cold air downgrade"
     if wind >= 10:
-        factor += .04
+        factor += .08
         note += f" • wind {direction} {wind}mph"
     return {"temp":temp,"wind":wind,"dir":direction,"factor":factor,"note":note}
 
@@ -774,6 +796,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "RBI %": round(rbi_prob * 100, 1),
         "Laser %": round(laser_prob * 100, 1),
         "Form": m["Form"],
+        "Form Score": m["Form Score"],
         "Auto Matchup Edge": round(me, 2),
         "Pitcher Risk": round(pr, 2),
         "Park Edge": round(park_edge, 2),
@@ -1147,6 +1170,43 @@ def pick_card(title, data):
     </div>
     """
 
+
+def render_dinger_board(data):
+    if data is None or data.empty:
+        return "<div class='note'>No dinger targets available.</div>"
+
+    html = "<div class='dinger-board'>"
+    for _, r in data.iterrows():
+        rank = r.get("Dinger Rank", "")
+        player = r.get("Player", "")
+        team = r.get("Team", "")
+        hand = ""
+        grade = r.get("Grade", "")
+        badge = r.get("Bet Badge", r.get("Badge", ""))
+        hrp = r.get("HR %", "")
+        season_hr = r.get("Season HR", 0)
+        pitcher = r.get("Pitcher", "")
+        weather = str(r.get("Weather Alert", ""))
+        weather_short = "GOOD" if ("warm" in weather.lower() or "boost" in weather.lower() or "wind" in weather.lower()) else "BAD" if ("cold" in weather.lower() or "downgrade" in weather.lower()) else "NEUTRAL"
+        pill_class = "dinger-pill-good" if weather_short == "GOOD" else "dinger-pill-bad" if weather_short == "BAD" else "dinger-pill-mid"
+        note = r.get("Brief Note", "")
+
+        html += f"""
+        <div class='dinger-row'>
+          <div class='dinger-rank'>{rank}</div>
+          <div>
+            <div class='dinger-name'>{player} <span class='dinger-pill {pill_class}'>{grade}</span></div>
+            <div class='dinger-sub'>{team} • {badge}</div>
+          </div>
+          <div class='dinger-num'>{hrp}%<div class='dinger-sub'>MODEL</div></div>
+          <div class='dinger-small'>{season_hr}<br>SEASON HR</div>
+          <div class='dinger-small'><span class='dinger-pill {pill_class}'>{weather_short}</span><br>{r.get("Game Weather","")}</div>
+          <div class='dinger-note'>{note}<br><b>vs {pitcher}</b></div>
+        </div>
+        """
+    html += "</div>"
+    return html
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
@@ -1193,27 +1253,40 @@ with tab3:
 with tab4:
     st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
 
-    st.markdown("<div class='note'>Top dinger targets are ranked from the full merged player list with season HR totals, HR probability, pitcher weakness, matchup edge, and weather alert.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Top dinger targets are now ranked heavily by Power, Recent Form, Park, Weather, Matchup Edge, and Pitcher HR weakness.</div>", unsafe_allow_html=True)
 
-    st.markdown("### 📝 Top Dinger Targets of the Day")
+    st.markdown("### 📝 Top 15 Most Likely To Go Yard")
 
     dinger_list = parlay_pool.copy() if not parlay_pool.empty else df.copy()
 
     if not dinger_list.empty:
-        dinger_list = dinger_list.sort_values("HR %", ascending=False).reset_index(drop=True)
+        dinger_list["TRUE DINGER SCORE"] = (
+            dinger_list["Power"].apply(safe_float) * 0.35
+            + dinger_list["Form Score"].apply(safe_float) * 0.20
+            + dinger_list["Park Edge"].apply(safe_float) * 0.15
+            + dinger_list["Weather Edge"].apply(safe_float) * 0.15
+            + dinger_list["Auto Matchup Edge"].apply(safe_float) * 0.10
+            + dinger_list["Pitcher Risk"].apply(safe_float) * 0.05
+        )
+
+        dinger_list = dinger_list.sort_values("TRUE DINGER SCORE", ascending=False).reset_index(drop=True)
         dinger_list["Dinger Rank"] = range(1, len(dinger_list) + 1)
-        dinger_list["Bet Badge"] = dinger_list.apply(bet_badge, axis=1)
+        dinger_list["Bet Badge"] = dinger_list.apply(bet_badge, axis=1) if "bet_badge" in globals() else dinger_list["Badge"]
 
         def dinger_note_row(r):
             return (
-                f"Barrel/Power {r.get('Power','N/A')} • "
-                f"Pitcher weakness {r.get('Pitcher Risk','N/A')} • "
-                f"Matchup edge {r.get('Auto Matchup Edge','N/A')} • "
-                f"{r.get('Weather Alert','')}"
+                f"Power {r['Power']} • "
+                f"Form {round(safe_float(r.get('Form Score',0)),2)} • "
+                f"Park {r['Park Edge']} • "
+                f"Weather {r['Weather Edge']} • "
+                f"PitcherRisk {r['Pitcher Risk']}"
             )
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
+        st.markdown(render_dinger_board(dinger_list.head(15)), unsafe_allow_html=True)
+
+        st.markdown("### 📋 Dinger Target Details")
         notepad_cols = [
             "Dinger Rank",
             "Player",
@@ -1221,6 +1294,7 @@ with tab4:
             "Bet Badge",
             "Badge",
             "HR %",
+            "TRUE DINGER SCORE",
             "Dinger Score",
             "Grade",
             "Season HR",
@@ -1229,9 +1303,12 @@ with tab4:
             "Pitcher",
             "Pitcher Risk",
             "Auto Matchup Edge",
+            "Power",
+            "Form Score",
+            "Park Edge",
+            "Weather Edge",
             "Brief Note"
         ]
-
         st.markdown(render(dinger_list.head(15), notepad_cols), unsafe_allow_html=True)
     else:
         st.warning("No dinger targets available yet.")
@@ -1253,10 +1330,13 @@ with tab4:
                 continue
 
             tier_pool["Tier Combo Score"] = (
-                tier_pool["HR %"].apply(safe_float) * 0.45
-                + tier_pool["Dinger Score"].apply(safe_float) * 0.30
-                + tier_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.20
-                + tier_pool["Season HR"].apply(safe_float) * 0.05
+                tier_pool["HR %"].apply(safe_float) * 0.30
+                + tier_pool["Power"].apply(safe_float) * 25 * 0.25
+                + tier_pool["Form Score"].apply(safe_float) * 25 * 0.15
+                + tier_pool["Park Edge"].apply(safe_float) * 25 * 0.10
+                + tier_pool["Weather Edge"].apply(safe_float) * 25 * 0.10
+                + tier_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.07
+                + tier_pool["Pitcher Risk"].apply(safe_float) * 25 * 0.03
             )
 
             tier_pool = tier_pool.sort_values("Tier Combo Score", ascending=False)
@@ -1280,10 +1360,13 @@ with tab4:
         if len(selected) < 3:
             fallback = pool.copy()
             fallback["Tier Combo Score"] = (
-                fallback["HR %"].apply(safe_float) * 0.45
-                + fallback["Dinger Score"].apply(safe_float) * 0.30
-                + fallback["Auto Matchup Edge"].apply(safe_float) * 25 * 0.20
-                + fallback["Season HR"].apply(safe_float) * 0.05
+                fallback["HR %"].apply(safe_float) * 0.30
+                + fallback["Power"].apply(safe_float) * 25 * 0.25
+                + fallback["Form Score"].apply(safe_float) * 25 * 0.15
+                + fallback["Park Edge"].apply(safe_float) * 25 * 0.10
+                + fallback["Weather Edge"].apply(safe_float) * 25 * 0.10
+                + fallback["Auto Matchup Edge"].apply(safe_float) * 25 * 0.07
+                + fallback["Pitcher Risk"].apply(safe_float) * 25 * 0.03
             )
             fallback = fallback.sort_values("Tier Combo Score", ascending=False)
 
