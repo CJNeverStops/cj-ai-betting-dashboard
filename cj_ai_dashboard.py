@@ -1072,6 +1072,88 @@ with tab4:
     else:
         st.warning("Not enough eligible players to generate different 3-leg HR combos.")
 
+
+    st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
+
+    def tiered_best_3_leg(pool):
+        if pool is None or pool.empty:
+            return pd.DataFrame()
+
+        tier_order = ["S+", "S", "A+", "A", "B", "C", "D"]
+        selected = []
+        used_players = set()
+        used_matchups = set()
+
+        for tier in tier_order:
+            tier_pool = pool[pool["Grade"] == tier].copy()
+            if tier_pool.empty:
+                continue
+
+            tier_pool["Tier Combo Score"] = (
+                tier_pool["HR %"].apply(safe_float) * 0.45
+                + tier_pool["Dinger Score"].apply(safe_float) * 0.30
+                + tier_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.20
+                + tier_pool["Season HR"].apply(safe_float) * 0.05
+            )
+
+            tier_pool = tier_pool.sort_values("Tier Combo Score", ascending=False)
+
+            for _, r in tier_pool.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                if r["Matchup"] in used_matchups:
+                    continue
+
+                selected.append(r)
+                used_players.add(r["Player"])
+                used_matchups.add(r["Matchup"])
+                break
+
+            if len(selected) >= 3:
+                break
+
+        # Fallback if not enough different tiers/games
+        if len(selected) < 3:
+            fallback = pool.copy()
+            fallback["Tier Combo Score"] = (
+                fallback["HR %"].apply(safe_float) * 0.45
+                + fallback["Dinger Score"].apply(safe_float) * 0.30
+                + fallback["Auto Matchup Edge"].apply(safe_float) * 25 * 0.20
+                + fallback["Season HR"].apply(safe_float) * 0.05
+            )
+            fallback = fallback.sort_values("Tier Combo Score", ascending=False)
+
+            for _, r in fallback.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+
+                selected.append(r)
+                used_players.add(r["Player"])
+
+        return pd.DataFrame(selected)
+
+    tier_3 = tiered_best_3_leg(parlay_pool)
+
+    if len(tier_3) == 3:
+        tier_combo_conf = round(
+            (tier_3["HR %"].apply(safe_float) / 100).prod() * 100,
+            4
+        )
+
+        st.success(f"Best Tiered 3-Leg HR Parlay | Combo Confidence: {tier_combo_conf}%")
+
+        st.markdown(render(
+            tier_3,
+            ["Player","Team","Grade","Badge","HR %","Dinger Score","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source","Tier Combo Score"]
+        ), unsafe_allow_html=True)
+    else:
+        st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
+
+
     st.markdown("### 🛡️ Best 2 HR Combos")
     combos_2 = build_hr_combos_by_legs(parlay_pool, legs=2, max_combos=2)
     st.markdown(render(combo_summary_table(combos_2, "2-Leg HR")), unsafe_allow_html=True)
