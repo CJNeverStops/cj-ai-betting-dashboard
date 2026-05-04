@@ -1488,35 +1488,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render_target_cards(dinger_list.head(25)), unsafe_allow_html=True)
-
-        st.markdown("### 📋 Dinger Target Details")
-        notepad_cols = [
-            "Dinger Rank",
-            "Player",
-            "Team",
-            "Bet Badge",
-            "Badge",
-            "HR %",
-            "TRUE DINGER SCORE 100",
-            "Tier Label",
-            "Dinger Score",
-            "Grade",
-            "Season HR",
-            "Game Weather",
-            "Weather Alert",
-            "Pitcher",
-            "Pitcher Risk",
-            "Auto Matchup Edge",
-            "Power",
-            "Form Score",
-            "Park Edge",
-            "Weather Edge",
-            "Brief Note"
-        ]
-        st.markdown(render(dinger_list.head(15), notepad_cols), unsafe_allow_html=True)
-    else:
-        st.warning("No dinger targets available yet.")
+        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
