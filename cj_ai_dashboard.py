@@ -59,6 +59,37 @@ st.markdown("""
   .dinger-small { font-size:9px; }
 }
 
+
+.tier-board { background:#f8fafc; color:#111827; border:1px solid #cbd5e1; border-radius:16px; overflow:hidden; margin-bottom:18px; font-family:Arial, sans-serif; }
+.tier-head { display:grid; grid-template-columns:42px 1.45fr 48px 46px 62px 62px 70px 78px; gap:6px; padding:9px 8px; background:#e5e7eb; font-weight:900; font-size:11px; color:#374151; text-transform:uppercase; }
+.tier-title { background:#e5e7eb; color:#374151; font-size:22px; font-weight:900; padding:8px 12px; border-top:1px solid #d1d5db; border-bottom:1px solid #d1d5db; letter-spacing:.04em; }
+.tier-row { display:grid; grid-template-columns:42px 1.45fr 48px 46px 62px 62px 70px 78px; gap:6px; align-items:center; padding:9px 8px; border-bottom:1px solid #e5e7eb; font-size:13px; }
+.tier-row-elite { background:#fee2e2; }
+.tier-row-very { background:#f3e8ff; }
+.tier-row-good { background:#ffffff; }
+.tier-row-watch { background:#f8fafc; }
+.tier-rank { color:#9ca3af; font-weight:800; text-align:center; }
+.tier-player { font-weight:900; color:#111827; }
+.tier-sub { display:block; font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; }
+.tier-pill { display:inline-block; padding:2px 6px; border-radius:999px; font-size:10px; font-weight:900; color:#fff; }
+.tier-pill-s { background:#166534; }
+.tier-pill-a { background:#2563eb; }
+.tier-pill-b { background:#7c3aed; }
+.tier-pill-c { background:#92400e; }
+.tier-score { font-weight:900; color:#7f1d1d; text-align:center; }
+.tier-cell { text-align:center; font-weight:800; color:#374151; }
+.tier-weather-good { background:#bbf7d0; color:#14532d; border-radius:6px; padding:3px 4px; font-weight:900; font-size:10px; text-align:center; }
+.tier-weather-mid { background:#fde68a; color:#78350f; border-radius:6px; padding:3px 4px; font-weight:900; font-size:10px; text-align:center; }
+.tier-weather-bad { background:#fecaca; color:#7f1d1d; border-radius:6px; padding:3px 4px; font-weight:900; font-size:10px; text-align:center; }
+@media (max-width:700px) {
+  .tier-head, .tier-row { grid-template-columns:28px 1.35fr 34px 38px 48px 48px 54px 58px; gap:4px; padding:7px 5px; font-size:10px; }
+  .tier-title { font-size:16px; padding:7px 8px; }
+  .tier-player { font-size:12px; }
+  .tier-sub { font-size:8px; }
+  .tier-pill { font-size:8px; padding:2px 4px; }
+  .tier-weather-good, .tier-weather-mid, .tier-weather-bad { font-size:8px; padding:2px 3px; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1207,6 +1238,96 @@ def render_dinger_board(data):
     html += "</div>"
     return html
 
+
+def tier_label_from_score(score):
+    score = safe_float(score)
+    if score >= 80:
+        return "ELITE (≥80)"
+    if score >= 70:
+        return "VERY GOOD (70–79.9)"
+    if score >= 60:
+        return "GOOD (60–69.9)"
+    if score >= 50:
+        return "WORTH WATCHING (50–59.9)"
+    return "LONG SHOT (<50)"
+
+def tier_row_class(score):
+    score = safe_float(score)
+    if score >= 80:
+        return "tier-row-elite"
+    if score >= 70:
+        return "tier-row-very"
+    if score >= 60:
+        return "tier-row-good"
+    return "tier-row-watch"
+
+def grade_pill_class(grade):
+    grade = str(grade)
+    if grade in ["S+", "S"]:
+        return "tier-pill-s"
+    if grade in ["A+", "A"]:
+        return "tier-pill-a"
+    if grade == "B":
+        return "tier-pill-b"
+    return "tier-pill-c"
+
+def weather_class(alert):
+    alert = str(alert).lower()
+    if "warm" in alert or "boost" in alert or "wind" in alert:
+        return "tier-weather-good"
+    if "cold" in alert or "downgrade" in alert:
+        return "tier-weather-bad"
+    return "tier-weather-mid"
+
+def render_ranked_tier_board(data):
+    if data is None or data.empty:
+        return "<div class='note'>No ranked dinger targets available.</div>"
+
+    display = data.copy()
+    html = "<div class='tier-board'>"
+    html += "<div class='tier-head'><div>#</div><div>Player</div><div>TM</div><div>H</div><div>PWR</div><div>HR</div><div>CB</div><div>Weather</div></div>"
+
+    tier_order = ["ELITE (≥80)", "VERY GOOD (70–79.9)", "GOOD (60–69.9)", "WORTH WATCHING (50–59.9)", "LONG SHOT (<50)"]
+
+    for tier in tier_order:
+        group = display[display["Tier Label"] == tier]
+        if group.empty:
+            continue
+
+        html += f"<div class='tier-title'>—— {tier} ——</div>"
+
+        for _, r in group.iterrows():
+            score = safe_float(r.get("TRUE DINGER SCORE 100", 0))
+            cls = tier_row_class(score)
+            grade = r.get("Grade", "")
+            pill_cls = grade_pill_class(grade)
+            weather_cls = weather_class(r.get("Weather Alert", ""))
+            player = r.get("Player", "")
+            team = r.get("Team", "")
+            hand = ""
+            rank = r.get("Dinger Rank", "")
+            pwr = r.get("Power", "")
+            hr = r.get("Season HR", "")
+            cb = r.get("Park Edge", "")
+            hrp = r.get("HR %", "")
+            bet = r.get("Bet Badge", "")
+            weather = r.get("Game Weather", "")
+
+            html += f"""
+            <div class='tier-row {cls}'>
+                <div class='tier-rank'>{rank}</div>
+                <div class='tier-player'>{player} <span class='tier-pill {pill_cls}'>{grade}</span><span class='tier-sub'>{team} • {bet}</span></div>
+                <div class='tier-cell'>{team}</div>
+                <div class='tier-cell'>{hand}</div>
+                <div class='tier-score'>{round(safe_float(pwr)*100)}</div>
+                <div class='tier-score'>{hr}</div>
+                <div class='tier-cell'>x{round(safe_float(cb),2)}</div>
+                <div class='{weather_cls}'>{round(safe_float(hrp),1)}%<br>{weather}</div>
+            </div>
+            """
+    html += "</div>"
+    return html
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
@@ -1262,21 +1383,23 @@ with tab4:
     if not dinger_list.empty:
         dinger_list["TRUE DINGER SCORE"] = (
             dinger_list["Power"].apply(safe_float) * 0.35
-            + dinger_list["Form Score"].apply(safe_float) * 0.20
+            + dinger_list.get("Form Score", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.20
             + dinger_list["Park Edge"].apply(safe_float) * 0.15
             + dinger_list["Weather Edge"].apply(safe_float) * 0.15
             + dinger_list["Auto Matchup Edge"].apply(safe_float) * 0.10
             + dinger_list["Pitcher Risk"].apply(safe_float) * 0.05
         )
+        dinger_list["TRUE DINGER SCORE 100"] = (dinger_list["TRUE DINGER SCORE"] * 100).round(1)
 
         dinger_list = dinger_list.sort_values("TRUE DINGER SCORE", ascending=False).reset_index(drop=True)
         dinger_list["Dinger Rank"] = range(1, len(dinger_list) + 1)
-        dinger_list["Bet Badge"] = dinger_list.apply(bet_badge, axis=1) if "bet_badge" in globals() else dinger_list["Badge"]
+        dinger_list["Bet Badge"] = dinger_list.apply(bet_badge, axis=1)
+        dinger_list["Tier Label"] = dinger_list["TRUE DINGER SCORE 100"].apply(tier_label_from_score)
 
         def dinger_note_row(r):
             return (
                 f"Power {r['Power']} • "
-                f"Form {round(safe_float(r.get('Form Score',0)),2)} • "
+                f"Form {round(safe_float(r.get('Form Score',0.5)),2)} • "
                 f"Park {r['Park Edge']} • "
                 f"Weather {r['Weather Edge']} • "
                 f"PitcherRisk {r['Pitcher Risk']}"
@@ -1284,7 +1407,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render_dinger_board(dinger_list.head(15)), unsafe_allow_html=True)
+        st.markdown(render_ranked_tier_board(dinger_list.head(25)), unsafe_allow_html=True)
 
         st.markdown("### 📋 Dinger Target Details")
         notepad_cols = [
@@ -1294,7 +1417,8 @@ with tab4:
             "Bet Badge",
             "Badge",
             "HR %",
-            "TRUE DINGER SCORE",
+            "TRUE DINGER SCORE 100",
+            "Tier Label",
             "Dinger Score",
             "Grade",
             "Season HR",
@@ -1332,7 +1456,7 @@ with tab4:
             tier_pool["Tier Combo Score"] = (
                 tier_pool["HR %"].apply(safe_float) * 0.30
                 + tier_pool["Power"].apply(safe_float) * 25 * 0.25
-                + tier_pool["Form Score"].apply(safe_float) * 25 * 0.15
+                + tier_pool.get("Form Score", pd.Series([0.5] * len(tier_pool))).apply(safe_float) * 25 * 0.15
                 + tier_pool["Park Edge"].apply(safe_float) * 25 * 0.10
                 + tier_pool["Weather Edge"].apply(safe_float) * 25 * 0.10
                 + tier_pool["Auto Matchup Edge"].apply(safe_float) * 25 * 0.07
@@ -1362,7 +1486,7 @@ with tab4:
             fallback["Tier Combo Score"] = (
                 fallback["HR %"].apply(safe_float) * 0.30
                 + fallback["Power"].apply(safe_float) * 25 * 0.25
-                + fallback["Form Score"].apply(safe_float) * 25 * 0.15
+                + fallback.get("Form Score", pd.Series([0.5] * len(fallback))).apply(safe_float) * 25 * 0.15
                 + fallback["Park Edge"].apply(safe_float) * 25 * 0.10
                 + fallback["Weather Edge"].apply(safe_float) * 25 * 0.10
                 + fallback["Auto Matchup Edge"].apply(safe_float) * 25 * 0.07
