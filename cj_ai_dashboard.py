@@ -1,5 +1,6 @@
 import math
 import time
+import unicodedata
 import pandas as pd
 import requests
 import streamlit as st
@@ -74,7 +75,10 @@ def scale01(x, a, b):
         return 0.5
 
 def norm(x):
-    return " ".join(str(x).lower().replace(",", "").strip().split())
+    s = str(x).lower().replace(",", " ").replace(".", " ").strip()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    parts = [p for p in s.split() if p not in ["jr", "sr", "ii", "iii", "iv"]]
+    return " ".join(parts)
 
 def first_last(x):
     x = str(x).strip()
@@ -175,6 +179,22 @@ def badge_score(s):
     if s >= 20: return "🟡 Solid"
     if s >= 16: return "⚪ Lean"
     return "🔻 Fade"
+
+def bet_badge(row):
+    grade = str(row.get("Grade", ""))
+    hrp = safe_float(row.get("HR %", 0))
+    matchup = safe_float(row.get("Auto Matchup Edge", 0))
+    weather = str(row.get("Weather Alert", ""))
+
+    if grade in ["S+", "S"] or (hrp >= 24 and matchup >= 0.60):
+        return "🔥 Strong Bet"
+    if grade in ["A+", "A"] or (hrp >= 20 and matchup >= 0.52):
+        return "✅ Good Bet"
+    if grade == "B":
+        return "🟡 Lean"
+    if "cold" in weather.lower() or "downgrade" in weather.lower():
+        return "⚠️ Weather Risk"
+    return "⚪ Watchlist"
 
 def color_grade(g):
     return {
@@ -385,6 +405,7 @@ def get_all_mlb_hitters():
         stat = s.get("stat", {}) or {}
 
         name = player.get("fullName", "")
+        player_id = player.get("id", None)
         team_name = team.get("name", "")
         if not name:
             continue
@@ -398,6 +419,7 @@ def get_all_mlb_hitters():
 
         rows.append({
             "_name": name,
+            "player_id": player_id,
             "_team": normalize_team(team_name),
             "season_hr": int(hr),
             "pa": pa,
@@ -441,25 +463,78 @@ mlb_players = get_all_mlb_hitters()
 mlb_injected_count = 0
 
 if not mlb_players.empty:
-    # Inject missing MLB players
-    existing = set(batters["_name"].astype(str).apply(norm))
-    missing_players = mlb_players[~mlb_players["_name"].astype(str).apply(norm).isin(existing)].copy()
+    # Inject missing MLB players. Prefer player_id matching when available, then normalized name.
+    existing_names = set(batters["_name"].astype(str).apply(norm))
+
+    existing_ids = set()
+    existing_id_col = find_col(batters, ["player_id", "id", "mlb_id"])
+    if existing_id_col:
+        existing_ids = set(batters[existing_id_col].astype(str))
+
+    if "player_id" in mlb_players.columns and existing_ids:
+        missing_players = mlb_players[
+            ~mlb_players["player_id"].astype(str).isin(existing_ids)
+            & ~mlb_players["_name"].astype(str).apply(norm).isin(existing_names)
+        ].copy()
+    else:
+        missing_players = mlb_players[
+            ~mlb_players["_name"].astype(str).apply(norm).isin(existing_names)
+        ].copy()
+
     mlb_injected_count = len(missing_players)
     if not missing_players.empty:
         batters = pd.concat([batters, missing_players], ignore_index=True, sort=False)
 
-    # Add season_hr to existing players too
-    hr_lookup = dict(zip(mlb_players["_name"].astype(str).apply(norm), mlb_players["season_hr"]))
-    team_lookup = dict(zip(mlb_players["_name"].astype(str).apply(norm), mlb_players["_team"]))
+    # Add/update season_hr for EVERY player.
+    hr_lookup_name = dict(zip(mlb_players["_name"].astype(str).apply(norm), mlb_players["season_hr"]))
+    team_lookup_name = dict(zip(mlb_players["_name"].astype(str).apply(norm), mlb_players["_team"]))
 
-    batters["season_hr"] = batters.apply(
-        lambda r: hr_lookup.get(norm(r.get("_name", "")), safe_float(r.get("season_hr", 0), 0)),
-        axis=1
-    )
-    batters["_team"] = batters.apply(
-        lambda r: r["_team"] if str(r.get("_team", "N/A")) != "N/A" else team_lookup.get(norm(r.get("_name", "")), "N/A"),
-        axis=1
-    )
+    hr_lookup_id = {}
+    team_lookup_id = {}
+    if "player_id" in mlb_players.columns:
+        hr_lookup_id = dict(zip(mlb_players["player_id"].astype(str), mlb_players["season_hr"]))
+        team_lookup_id = dict(zip(mlb_players["player_id"].astype(str), mlb_players["_team"]))
+
+    id_col = find_col(batters, ["player_id", "id", "mlb_id"])
+
+    def lookup_season_hr(r):
+        current = safe_float(r.get("season_hr", 0), 0)
+
+        if id_col:
+            pid = str(r.get(id_col, ""))
+            if pid in hr_lookup_id:
+                return hr_lookup_id[pid]
+
+        nm = norm(r.get("_name", ""))
+        if nm in hr_lookup_name:
+            return hr_lookup_name[nm]
+
+        # Soft last-name fallback for rare accent/suffix mismatches.
+        parts = nm.split()
+        if len(parts) >= 2:
+            first_initial = parts[0][0]
+            last = parts[-1]
+            candidates = mlb_players[mlb_players["_name"].astype(str).apply(lambda x: len(norm(x).split()) >= 2 and norm(x).split()[-1] == last and norm(x).split()[0][0] == first_initial)]
+            if len(candidates) == 1:
+                return safe_float(candidates.iloc[0].get("season_hr", current), current)
+
+        return current
+
+    def lookup_team(r):
+        cur = r.get("_team", "N/A")
+        if str(cur) != "N/A":
+            return cur
+
+        if id_col:
+            pid = str(r.get(id_col, ""))
+            if pid in team_lookup_id:
+                return team_lookup_id[pid]
+
+        nm = norm(r.get("_name", ""))
+        return team_lookup_name.get(nm, "N/A")
+
+    batters["season_hr"] = batters.apply(lookup_season_hr, axis=1)
+    batters["_team"] = batters.apply(lookup_team, axis=1)
 else:
     if "season_hr" not in batters.columns:
         batters["season_hr"] = 0
@@ -987,6 +1062,18 @@ def render(data, cols=None):
                     style = "background:rgba(239,68,68,.22);font-weight:900;"
                 else:
                     style = "background:rgba(234,179,8,.16);font-weight:900;"
+            elif c == "Bet Badge":
+                val = str(v)
+                if "Strong" in val:
+                    style = "background:rgba(34,197,94,.32);font-weight:900;"
+                elif "Good" in val:
+                    style = "background:rgba(34,197,94,.22);font-weight:900;"
+                elif "Lean" in val:
+                    style = "background:rgba(234,179,8,.22);font-weight:900;"
+                elif "Risk" in val:
+                    style = "background:rgba(239,68,68,.22);font-weight:900;"
+                else:
+                    style = "background:rgba(148,163,184,.18);font-weight:900;"
             elif "%" in c or c in ["Avg Model %","Model Combo Confidence","Avg HR %"]:
                 style = "background:rgba(34,197,94,.25);" if safe_float(v) >= 60 else "background:rgba(234,179,8,.18);" if safe_float(v) >= 35 else "background:rgba(239,68,68,.15);"
             elif c == "Form":
@@ -1071,6 +1158,7 @@ with tab4:
     if not dinger_list.empty:
         dinger_list = dinger_list.sort_values("HR %", ascending=False).reset_index(drop=True)
         dinger_list["Dinger Rank"] = range(1, len(dinger_list) + 1)
+        dinger_list["Bet Badge"] = dinger_list.apply(bet_badge, axis=1)
 
         def dinger_note_row(r):
             return (
@@ -1086,6 +1174,8 @@ with tab4:
             "Dinger Rank",
             "Player",
             "Team",
+            "Bet Badge",
+            "Badge",
             "HR %",
             "Dinger Score",
             "Grade",
