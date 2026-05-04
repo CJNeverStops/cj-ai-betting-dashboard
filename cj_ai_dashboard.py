@@ -659,6 +659,8 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Pitcher Risk": round(pr, 2),
         "Park Edge": round(park_edge, 2),
         "Weather Edge": round(weather_edge, 2),
+        "Weather Alert": weather["note"],
+        "Game Weather": f"{weather['temp']}°F / {weather['wind']}mph {weather['dir']}",
         "Power": m["Power"],
         "Laser": m["Laser"],
         "Season HR": m["Season HR"],
@@ -946,9 +948,9 @@ parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else 
 # =========================
 # DISPLAY
 # =========================
-mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
-full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser","Season HR","Data Source"]
-breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Season HR","Data Source","Reasons"]
+mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
+full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser","Season HR","Data Source"]
+breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Season HR","Data Source","Reasons"]
 
 def render(data, cols=None):
     if data is None or data.empty:
@@ -977,12 +979,20 @@ def render(data, cols=None):
                 style = "background:rgba(34,197,94,.25);font-weight:900;" if str(v) == "Yes" else "background:rgba(239,68,68,.22);font-weight:900;"
             elif c == "Data Source":
                 style = "background:rgba(168,85,247,.25);font-weight:900;" if "MLB API" in str(v) else ""
+            elif c == "Weather Alert":
+                val = str(v)
+                if "warm" in val or "boost" in val or "wind" in val:
+                    style = "background:rgba(34,197,94,.25);font-weight:900;"
+                elif "cold" in val or "downgrade" in val:
+                    style = "background:rgba(239,68,68,.22);font-weight:900;"
+                else:
+                    style = "background:rgba(234,179,8,.16);font-weight:900;"
             elif "%" in c or c in ["Avg Model %","Model Combo Confidence","Avg HR %"]:
                 style = "background:rgba(34,197,94,.25);" if safe_float(v) >= 60 else "background:rgba(234,179,8,.18);" if safe_float(v) >= 35 else "background:rgba(239,68,68,.15);"
             elif c == "Form":
                 val = str(v)
                 style = "color:#86efac;font-weight:900;" if "Hot" in val else "color:#93c5fd;font-weight:900;" if "Good" in val else "color:#fde68a;font-weight:900;" if "Neutral" in val else "color:#fca5a5;font-weight:900;"
-            elif c in ["Reasons","Pick Explanation","Notes","Strategy"]:
+            elif c in ["Reasons","Pick Explanation","Notes","Strategy","Brief Note"]:
                 style = "white-space:normal;min-width:520px;color:#cbd5e1;"
             elif c in ["Leg 1 Anchor","Leg 2 Support","Leg 3 Value","Leg 1","Leg 2","Leg 3"]:
                 style = "font-weight:800;color:#e5e7eb;"
@@ -1050,28 +1060,47 @@ with tab3:
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
 with tab4:
-    st.subheader("🧾 Dynamic HR Parlays")
-    st.markdown("<div class='note'>HR combos use HR %, Dinger Score, Matchup Edge, Season HR, and avoid same-game overlap when possible. Larger HR combos are higher risk.</div>", unsafe_allow_html=True)
+    st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
 
-    st.markdown("### 🎰 Clickable Smart HR Parlay Generator")
+    st.markdown("<div class='note'>Top dinger targets are ranked from the full merged player list with season HR totals, HR probability, pitcher weakness, matchup edge, and weather alert.</div>", unsafe_allow_html=True)
 
-    if "hr_combo_clicks" not in st.session_state:
-        st.session_state.hr_combo_clicks = 0
+    st.markdown("### 📝 Top Dinger Targets of the Day")
 
-    if st.button("Generate Different Smart 3-Leg HR Parlay"):
-        st.session_state.hr_combo_clicks += 1
+    dinger_list = parlay_pool.copy() if not parlay_pool.empty else df.copy()
 
-    combos = build_hr_combos_by_legs(parlay_pool, legs=3, max_combos=12)
-    if combos:
-        combo_index = st.session_state.hr_combo_clicks % len(combos)
-        gen_df = combos[combo_index]
-        combo_chance = combo_confidence(gen_df)
+    if not dinger_list.empty:
+        dinger_list = dinger_list.sort_values("HR %", ascending=False).reset_index(drop=True)
+        dinger_list["Dinger Rank"] = range(1, len(dinger_list) + 1)
 
-        st.success(f"Smart HR 3-Leg Combo #{combo_index + 1} of {len(combos)} | Model Combo Confidence: {combo_chance}%")
-        st.markdown(render(gen_df, ["Player","Team","HR %","Dinger Score","Grade","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source","Combo Score"]), unsafe_allow_html=True)
+        def dinger_note_row(r):
+            return (
+                f"Barrel/Power {r.get('Power','N/A')} • "
+                f"Pitcher weakness {r.get('Pitcher Risk','N/A')} • "
+                f"Matchup edge {r.get('Auto Matchup Edge','N/A')} • "
+                f"{r.get('Weather Alert','')}"
+            )
+
+        dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
+
+        notepad_cols = [
+            "Dinger Rank",
+            "Player",
+            "Team",
+            "HR %",
+            "Dinger Score",
+            "Grade",
+            "Season HR",
+            "Game Weather",
+            "Weather Alert",
+            "Pitcher",
+            "Pitcher Risk",
+            "Auto Matchup Edge",
+            "Brief Note"
+        ]
+
+        st.markdown(render(dinger_list.head(15), notepad_cols), unsafe_allow_html=True)
     else:
-        st.warning("Not enough eligible players to generate different 3-leg HR combos.")
-
+        st.warning("No dinger targets available yet.")
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -1114,7 +1143,6 @@ with tab4:
             if len(selected) >= 3:
                 break
 
-        # Fallback if not enough different tiers/games
         if len(selected) < 3:
             fallback = pool.copy()
             fallback["Tier Combo Score"] = (
@@ -1148,31 +1176,10 @@ with tab4:
 
         st.markdown(render(
             tier_3,
-            ["Player","Team","Grade","Badge","HR %","Dinger Score","Pitcher","Park","Game Status","Auto Matchup Edge","Season HR","Data Source","Tier Combo Score"]
+            ["Player","Team","Grade","Badge","HR %","Dinger Score","Pitcher","Pitcher Risk","Park","Game Weather","Weather Alert","Game Status","Auto Matchup Edge","Season HR","Data Source","Tier Combo Score"]
         ), unsafe_allow_html=True)
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
-
-
-    st.markdown("### 🛡️ Best 2 HR Combos")
-    combos_2 = build_hr_combos_by_legs(parlay_pool, legs=2, max_combos=2)
-    st.markdown(render(combo_summary_table(combos_2, "2-Leg HR")), unsafe_allow_html=True)
-
-    st.markdown("### 💣 Best 3 HR Combos")
-    combos_3 = build_hr_combos_by_legs(parlay_pool, legs=3, max_combos=3)
-    st.markdown(render(combo_summary_table(combos_3, "3-Leg HR")), unsafe_allow_html=True)
-
-    st.markdown("### 🔥 Best 4 HR Combos")
-    combos_4 = build_hr_combos_by_legs(parlay_pool, legs=4, max_combos=4)
-    st.markdown(render(combo_summary_table(combos_4, "4-Leg HR")), unsafe_allow_html=True)
-
-    st.markdown("### 🚀 Best 5 HR Combos")
-    combos_5 = build_hr_combos_by_legs(parlay_pool, legs=5, max_combos=5)
-    st.markdown(render(combo_summary_table(combos_5, "5-Leg HR")), unsafe_allow_html=True)
-
-    st.markdown("### ☢️ Best 6 HR Combos")
-    combos_6 = build_hr_combos_by_legs(parlay_pool, legs=6, max_combos=6)
-    st.markdown(render(combo_summary_table(combos_6, "6-Leg HR")), unsafe_allow_html=True)
 
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
