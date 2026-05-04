@@ -1457,7 +1457,7 @@ with tab4:
 
     st.markdown("<div class='note'>Top dinger targets are now ranked heavily by Power, Recent Form, Park, Weather, Matchup Edge, and Pitcher HR weakness.</div>", unsafe_allow_html=True)
 
-    st.markdown("### 📝 Top 15 Most Likely To Go Yard")
+    st.markdown("### 📝 Top 25 Most Likely To Go Yard")
 
     dinger_list = parlay_pool.copy() if not parlay_pool.empty else df.copy()
 
@@ -1488,7 +1488,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render_target_cards(dinger_list.head(15)), unsafe_allow_html=True)
+        st.markdown(render_target_cards(dinger_list.head(25)), unsafe_allow_html=True)
 
         st.markdown("### 📋 Dinger Target Details")
         notepad_cols = [
