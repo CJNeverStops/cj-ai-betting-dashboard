@@ -492,45 +492,58 @@ def hitter_live_season(pid):
 
 
 
-@st.cache_data(ttl=1800)
-def get_official_hr_leaders(limit=200):
+@st.cache_data(ttl=86400)
+def get_official_hr_leaders(limit=250):
     """
-    Dedicated MLB HR leaderboard pull.
-    Used to correct season_hr and make the Season HR Leaders combo accurate.
+    Daily official MLB.com HR leaderboard source.
+    This pulls official MLB Stats leaderboard data for:
+    https://www.mlb.com/stats/
+    Category: HR / Home Runs
     """
     season = time.strftime("%Y")
     url = (
         "https://statsapi.mlb.com/api/v1/stats/leaders"
-        f"?leaderCategories=homeRuns&statGroup=hitting&season={season}"
-        f"&sportIds=1&limit={limit}&hydrate=team"
+        f"?leaderCategories=homeRuns"
+        f"&statGroup=hitting"
+        f"&season={season}"
+        f"&sportIds=1"
+        f"&limit={limit}"
+        f"&hydrate=team"
     )
 
     try:
         data = requests.get(url, timeout=25).json()
         leaders = data.get("leagueLeaders", [{}])[0].get("leaders", [])
     except Exception:
-        return pd.DataFrame(columns=["_name","_team","official_hr_rank","official_season_hr"])
+        return pd.DataFrame(columns=[
+            "_name","player_id","_team","official_hr_rank","official_season_hr","HR Source"
+        ])
 
     rows = []
     for item in leaders:
         person = item.get("person", {}) or {}
         team = item.get("team", {}) or {}
+
         name = person.get("fullName", "")
         pid = person.get("id", None)
         team_name = team.get("name", "")
-        hr = safe_float(item.get("value", 0), 0)
-        rank = safe_float(item.get("rank", 999), 999)
+        hr = int(safe_float(item.get("value", 0), 0))
+        rank = int(safe_float(item.get("rank", 999), 999))
 
         if name:
             rows.append({
                 "_name": name,
                 "player_id": pid,
                 "_team": normalize_team(team_name),
-                "official_hr_rank": int(rank),
-                "official_season_hr": int(hr),
+                "official_hr_rank": rank,
+                "official_season_hr": hr,
+                "HR Source": "MLB.com/stats daily HR leaderboard"
             })
 
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(["official_hr_rank", "official_season_hr"], ascending=[True, False]).reset_index(drop=True)
+    return out
 
 
 @st.cache_data(ttl=3600)
@@ -733,9 +746,11 @@ if not official_hr_leaders.empty:
 
     batters["season_hr"] = batters.apply(official_hr_lookup_row, axis=1)
     batters["official_hr_rank"] = batters.apply(official_rank_lookup_row, axis=1)
+    batters["HR Source"] = "MLB.com/stats daily HR leaderboard"
 else:
     if "official_hr_rank" not in batters.columns:
         batters["official_hr_rank"] = 999
+    batters["HR Source"] = "season stats fallback"
 
 
 # Re-detect columns after injection
@@ -754,6 +769,7 @@ b_iso = find_col(batters, ["iso"])
 b_recent = find_col(batters, ["last7_slg","last7","last14","recent","recent_form"])
 b_season_hr = find_col(batters, ["season_hr","home_runs","hr"])
 b_official_hr_rank = find_col(batters, ["official_hr_rank"])
+b_hr_source = find_col(batters, ["HR Source", "hr_source"])
 
 # =========================
 # MODEL
@@ -780,6 +796,7 @@ def batter_metrics(row):
     hard = safe_float(row[b_hard], None) if b_hard else None
     season_hr = safe_float(row[b_season_hr], 0) if b_season_hr else 0
     official_hr_rank = safe_float(row[b_official_hr_rank], 999) if b_official_hr_rank else 999
+    hr_source = str(row[b_hr_source]) if b_hr_source else "season stats fallback"
     injected = bool(row.get("mlb_api_injected", False))
 
     if barrel is not None and barrel > 1:
@@ -831,6 +848,7 @@ def batter_metrics(row):
         "ISO": round(iso, 3),
         "Season HR": int(season_hr) if season_hr else 0,
         "Official HR Rank": int(official_hr_rank) if official_hr_rank != 999 else "N/A",
+        "HR Source": hr_source,
         "Data Source": source
     }
 
@@ -957,6 +975,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Laser": m["Laser"],
         "Season HR": m["Season HR"],
         "Official HR Rank": m.get("Official HR Rank", "N/A"),
+        "HR Source": m.get("HR Source", "season stats fallback"),
         "Data Source": m["Data Source"],
         "Reasons": reasons
     }
@@ -1356,7 +1375,9 @@ def smart_3_leg_hr_combos(pool, max_combos=10):
             leaders_pool = p.copy()
             if "Official HR Rank" in leaders_pool.columns:
                 leaders_pool["_rank_sort"] = leaders_pool["Official HR Rank"].apply(lambda x: safe_float(x, 999))
-                leaders_pool = leaders_pool.sort_values(["_rank_sort", "Season HR"], ascending=[True, False]).drop(columns=["_rank_sort"])
+                leaders_pool = leaders_pool[leaders_pool["_rank_sort"] < 999].sort_values(
+                    ["_rank_sort", "Season HR"], ascending=[True, False]
+                ).drop(columns=["_rank_sort"])
             else:
                 leaders_pool = leaders_pool.sort_values("Season HR", ascending=False)
 
@@ -1836,7 +1857,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -1960,7 +1981,8 @@ with tab6:
     st.write("Upcoming/non-final games shown:", len(games))
     st.write("Original batters.csv rows + injected MLB players:", len(batters))
     st.write("All MLB hitters pulled:", len(mlb_players))
-    st.write("Official HR leaders pulled:", len(official_hr_leaders) if "official_hr_leaders" in globals() else 0)
+    st.write("Official MLB.com/stats HR leaders pulled:", len(official_hr_leaders) if "official_hr_leaders" in globals() else 0)
+    st.write("HR leaderboard source:", "https://www.mlb.com/stats/")
     st.write("Season HR fix:", "Uses MLB player ID live season hitting stats when available")
     st.write("Missing MLB players injected:", mlb_injected_count)
     st.write("Game statuses:")
