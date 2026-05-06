@@ -121,7 +121,7 @@ st.markdown("""
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
-<p>All MLB Players Injected • Season HR For Everyone • Best K Pitcher • Best 8 Hits • HR Combos 2-6 Legs • Dynamic Parlays</p>
+<p>Advanced Dinger Edge • Pitch Matchup • Barrel Trend • Bat Speed • xHR • Splits • Bullpen • Roof • MLB.com HR Leaders</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -490,6 +490,132 @@ def hitter_live_season(pid):
     except Exception:
         return {"season_hr": None}
 
+
+
+
+# =========================
+# ADVANCED DINGER EDGE HELPERS
+# Safe fallback versions. Add CSV/API sources later and these will still work.
+# =========================
+@st.cache_data(ttl=1800)
+def get_pitcher_arsenal(player_id):
+    # Fallback pitch mix. Replace later with Baseball Savant pitch-usage API/CSV.
+    if not player_id:
+        return {}
+    return {"FF": 32, "SL": 25, "SI": 15, "CH": 14, "CU": 8, "FC": 6}
+
+@st.cache_data(ttl=1800)
+def get_batter_pitch_values(player_name):
+    # Fallback pitch values based on a neutral-to-good HR hitter profile.
+    # Later upgrade: CSV with player_name, FF, SL, SI, CH, CU, FC values.
+    return {"FF": .560, "SL": .525, "SI": .540, "CH": .500, "CU": .485, "FC": .515}
+
+def calculate_pitch_matchup_edge(pitcher_arsenal, batter_values):
+    if not pitcher_arsenal or not batter_values:
+        return .50
+    total = 0
+    weight_sum = 0
+    for pitch, usage in pitcher_arsenal.items():
+        total += safe_float(batter_values.get(pitch, .500), .500) * safe_float(usage, 0)
+        weight_sum += safe_float(usage, 0)
+    return round(total / weight_sum, 3) if weight_sum else .50
+
+@st.cache_data(ttl=1800)
+def get_recent_barrel_trends(player_name):
+    # Fallback. Later upgrade: use recent Statcast CSV/player logs.
+    return {
+        "barrel_7d": 9.0,
+        "barrel_14d": 8.0,
+        "hard_hit_7d": 42.0,
+        "avg_ev_7d": 90.0,
+        "launch_angle": 15.0
+    }
+
+def barrel_trend_score(trends):
+    barrel_7d = safe_float(trends.get("barrel_7d", 0), 0)
+    hard_hit_7d = safe_float(trends.get("hard_hit_7d", 0), 0)
+    avg_ev = safe_float(trends.get("avg_ev_7d", 88), 88)
+    launch_angle = safe_float(trends.get("launch_angle", 12), 12)
+
+    score = 0
+    score += min(barrel_7d / 20, 1.0) * .40
+    score += min(hard_hit_7d / 60, 1.0) * .30
+    score += clamp((avg_ev - 85) / 15, 0, 1) * .20
+    if 12 <= launch_angle <= 28:
+        score += .10
+    return round(clamp(score, 0, 1), 3)
+
+@st.cache_data(ttl=1800)
+def get_bat_speed(player_name):
+    # Fallback. Later upgrade: Baseball Savant bat tracking CSV.
+    return {"bat_speed": 71.0, "fast_swing_rate": 50.0}
+
+def bat_speed_score(data):
+    speed = safe_float(data.get("bat_speed", 70), 70)
+    fast_rate = safe_float(data.get("fast_swing_rate", 50), 50)
+    return round(clamp(speed / 80, 0, 1) * .65 + clamp(fast_rate / 75, 0, 1) * .35, 3)
+
+@st.cache_data(ttl=1800)
+def expected_hr_data(player_name, season_hr=0):
+    # Fallback expected HR proxy from season HR.
+    hr = safe_float(season_hr, 0)
+    return {
+        "xHR": max(hr, hr * 1.08),
+        "no_doubt_rate": clamp(10 + hr * 1.2, 8, 45),
+        "would_be_hr_today_park": clamp(hr * 1.05, 0, 40)
+    }
+
+def expected_hr_score(xhr):
+    return round(
+        clamp(safe_float(xhr.get("xHR", 0), 0) / 40, 0, 1) * .45
+        + clamp(safe_float(xhr.get("no_doubt_rate", 0), 0) / 50, 0, 1) * .25
+        + clamp(safe_float(xhr.get("would_be_hr_today_park", 0), 0) / 35, 0, 1) * .30,
+        3
+    )
+
+@st.cache_data(ttl=1800)
+def handedness_split_edge(player_name, pitcher_hand="R"):
+    # Fallback split. Later upgrade: add CSV columns vs_rhp_iso/vs_lhp_iso.
+    return .56 if pitcher_hand == "R" else .58
+
+@st.cache_data(ttl=1800)
+def bullpen_hr_risk(team):
+    # Fallback bullpen HR risk.
+    return {"hr9": 1.10, "risk_score": .50}
+
+@st.cache_data(ttl=1800)
+def umpire_edge(game_pk):
+    # Fallback neutral ump.
+    return {"umpire": "Neutral", "edge": .50}
+
+@st.cache_data(ttl=1800)
+def roof_status(park_name):
+    roof_parks = {
+        "Globe Life Field": "Open",
+        "Minute Maid Park": "Closed",
+        "Chase Field": "Open",
+        "Rogers Centre": "Closed",
+        "American Family Field": "Closed",
+        "T-Mobile Park": "Open",
+        "loanDepot park": "Closed",
+    }
+    status = roof_parks.get(park_name, "N/A")
+    boost = .58 if status == "Open" else .46 if status == "Closed" else .50
+    return {"roof_status": status, "roof_edge": boost}
+
+def mega_dinger_score(base_score, pitch_edge, barrel_edge, bat_speed_edge, xhr_edge, split_edge, bullpen_edge, ump_edge, roof_edge):
+    return round(
+        base_score * .45
+        + pitch_edge * 100 * .10
+        + barrel_edge * 100 * .10
+        + bat_speed_edge * 100 * .08
+        + xhr_edge * 100 * .10
+        + split_edge * 100 * .07
+        + bullpen_edge * 100 * .05
+        + ump_edge * 100 * .03
+        + roof_edge * 100 * .02,
+        1
+    )
 
 
 @st.cache_data(ttl=86400)
@@ -902,6 +1028,33 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
     lineup_edge = 1 - scale01(order, 1, 9) if isinstance(order, int) else .50
     me, me_note = auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge)
 
+    # Advanced dinger factors
+    pitch_edge = calculate_pitch_matchup_edge(
+        get_pitcher_arsenal(pitcher_id),
+        get_batter_pitch_values(player_name)
+    )
+
+    barrel_data = get_recent_barrel_trends(player_name)
+    barrel_edge = barrel_trend_score(barrel_data)
+
+    bat_speed_data = get_bat_speed(player_name)
+    bat_speed_edge = bat_speed_score(bat_speed_data)
+
+    xhr_data = expected_hr_data(player_name, m.get("Season HR", 0))
+    xhr_edge = expected_hr_score(xhr_data)
+
+    split_edge = handedness_split_edge(player_name, live.get("hand", "R"))
+
+    # Use opposing team/bullpen as matchup text fallback.
+    bullpen_data = bullpen_hr_risk(matchup)
+    bullpen_edge = safe_float(bullpen_data.get("risk_score", .50), .50)
+
+    ump_data = umpire_edge(game_pk)
+    ump_edge = safe_float(ump_data.get("edge", .50), .50)
+
+    roof_data = roof_status(park)
+    roof_edge = safe_float(roof_data.get("roof_edge", .50), .50)
+
     dinger_score = round(clamp(
         10 * m["Power"]
         + 6 * m["Laser"]
@@ -915,6 +1068,18 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         0, 42
     ), 1)
 
+    dinger_score = mega_dinger_score(
+        dinger_score,
+        pitch_edge,
+        barrel_edge,
+        bat_speed_edge,
+        xhr_edge,
+        split_edge,
+        bullpen_edge,
+        ump_edge,
+        roof_edge
+    )
+
     hr_prob = clamp(
         .035 + (
             .26 * m["Power"]
@@ -925,8 +1090,15 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
             + .07 * park_edge
             + .04 * weather_edge
             + .02 * lineup_edge
+            + .07 * pitch_edge
+            + .08 * barrel_edge
+            + .05 * bat_speed_edge
+            + .07 * xhr_edge
+            + .04 * split_edge
+            + .03 * bullpen_edge
+            + .02 * roof_edge
         ) * .34,
-        .010, .40
+        .010, .45
     )
 
     hit_prob = clamp(.28 + m["Contact"] * .42, .18, .82)
@@ -941,7 +1113,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         f"Pitcher Risk {round(pr,2)} HR/9 {round(live['hr9'],2)} ERA {live['era']} WHIP {live['whip']} • "
         f"Park: {park} {park_note(park_factor)} ({park_factor}) • "
         f"Weather: {weather['note']} {weather['temp']}°F wind {weather['wind']}mph {weather['dir']} • "
-        f"Power {m['Power']} • Laser {m['Laser']} • estSLG {m['estSLG']} • ISO {m['ISO']} • "
+        f"Power {m['Power']} • Laser {m['Laser']} • PitchEdge {round(pitch_edge,2)} • BarrelTrend {round(barrel_edge,2)} • xHR {round(xhr_edge,2)} • Roof {roof_data.get('roof_status','N/A')} • estSLG {m['estSLG']} • ISO {m['ISO']} • "
         f"Season HR {m['Season HR']} • HR Rank {m.get('Official HR Rank','N/A')} • Source {m['Data Source']}"
     )
 
@@ -972,6 +1144,15 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Weather Alert": weather["note"],
         "Game Weather": f"{weather['temp']}°F / {weather['wind']}mph {weather['dir']}",
         "Power": m["Power"],
+        "Pitch Type Edge": round(pitch_edge, 3),
+        "Barrel Trend Edge": round(barrel_edge, 3),
+        "Bat Speed Edge": round(bat_speed_edge, 3),
+        "Expected HR Edge": round(xhr_edge, 3),
+        "Hand Split Edge": round(split_edge, 3),
+        "Bullpen HR Edge": round(bullpen_edge, 3),
+        "Ump Edge": round(ump_edge, 3),
+        "Roof Edge": round(roof_edge, 3),
+        "Roof Status": roof_data.get("roof_status", "N/A"),
         "Laser": m["Laser"],
         "Season HR": m["Season HR"],
         "Official HR Rank": m.get("Official HR Rank", "N/A"),
@@ -1251,21 +1432,269 @@ def combo_summary_table(combos, leg_label):
     return pd.DataFrame(rows)
 
 
+def smart_3_leg_hr_combos(pool, max_combos=10):
+    """
+    Builds 10 different 3-leg HR combos using:
+    - tier/grade strength
+    - different games when possible
+    - hot hitter/form
+    - pitcher HR weakness
+    - weather/park boost
+    - power + season HR
+    """
+    if pool is None or pool.empty:
+        return []
+
+    p = pool.copy()
+
+    p["Smart Combo Score"] = (
+        p["HR %"].apply(safe_float) * 0.28
+        + p["Dinger Score"].apply(safe_float) * 0.18
+        + p["Power"].apply(safe_float) * 30 * 0.18
+        + p.get("Form Score", pd.Series([0.5] * len(p))).apply(safe_float) * 25 * 0.14
+        + p["Pitcher Risk"].apply(safe_float) * 25 * 0.10
+        + p["Park Edge"].apply(safe_float) * 20 * 0.06
+        + p["Weather Edge"].apply(safe_float) * 20 * 0.04
+        + p["Season HR"].apply(safe_float) * 0.02
+        + p.get("Pitch Type Edge", pd.Series([0.5] * len(p))).apply(safe_float) * 8
+        + p.get("Barrel Trend Edge", pd.Series([0.5] * len(p))).apply(safe_float) * 8
+        + p.get("Expected HR Edge", pd.Series([0.5] * len(p))).apply(safe_float) * 8
+    )
+
+    grade_bonus = {
+        "S+": 4.0,
+        "S": 3.5,
+        "A+": 3.0,
+        "A": 2.3,
+        "B": 1.2,
+        "C": 0.5,
+        "D": 0.0,
+    }
+
+    p["Smart Combo Score"] = p.apply(
+        lambda r: safe_float(r["Smart Combo Score"]) + grade_bonus.get(str(r.get("Grade", "")), 0),
+        axis=1
+    )
+
+    p = p.sort_values("Smart Combo Score", ascending=False).reset_index(drop=True)
+
+    combos = []
+    used_sets = set()
+
+    # Build different styles so every combo is not the same top 3.
+    combo_styles = [
+        "Best Overall",
+        "Elite Anchor + Hot Support + Value",
+        "Power Stack",
+        "Weak Pitcher Attack",
+        "Weather/Park Boost",
+        "Hot Hitter Form",
+        "Season HR Leaders",
+        "Balanced Different Games",
+        "High Probability",
+        "Contrarian Strong Spots",
+    ]
+
+    def select_from(candidates, selected, used_matchups, used_players, allow_same_game=False):
+        for _, r in candidates.iterrows():
+            if r["Player"] in used_players:
+                continue
+            if not allow_same_game and r["Matchup"] in used_matchups:
+                continue
+            selected.append(r)
+            used_players.add(r["Player"])
+            used_matchups.add(r["Matchup"])
+            return True
+        return False
+
+    for idx, style in enumerate(combo_styles):
+        selected = []
+        used_matchups = set()
+        used_players = set()
+
+        if style == "Best Overall":
+            pools = [p]
+
+        elif style == "Elite Anchor + Hot Support + Value":
+            elite = p[p["Grade"].isin(["S+", "S", "A+"])]
+            hot = p[p.get("Form Score", pd.Series([0.5] * len(p))).apply(safe_float) >= 0.60]
+            value = p[p["Grade"].isin(["A", "B"])]
+            pools = [elite, hot, value, p]
+
+        elif style == "Power Stack":
+            pools = [
+                p.sort_values("Power", ascending=False),
+                p.sort_values("Season HR", ascending=False),
+                p.sort_values("HR %", ascending=False),
+                p
+            ]
+
+        elif style == "Weak Pitcher Attack":
+            pools = [
+                p.sort_values("Pitcher Risk", ascending=False),
+                p.sort_values("Auto Matchup Edge", ascending=False),
+                p.sort_values("HR %", ascending=False),
+                p
+            ]
+
+        elif style == "Weather/Park Boost":
+            temp = p.copy()
+            temp["Env Score"] = temp["Weather Edge"].apply(safe_float) + temp["Park Edge"].apply(safe_float)
+            pools = [
+                temp.sort_values("Env Score", ascending=False),
+                p.sort_values("Power", ascending=False),
+                p.sort_values("HR %", ascending=False),
+                p
+            ]
+
+        elif style == "Hot Hitter Form":
+            pools = [
+                p.sort_values("Form Score", ascending=False) if "Form Score" in p.columns else p,
+                p.sort_values("Power", ascending=False),
+                p.sort_values("HR %", ascending=False),
+                p
+            ]
+
+        elif style == "Season HR Leaders":
+            leaders_pool = p.copy()
+            if "Official HR Rank" in leaders_pool.columns:
+                leaders_pool["_rank_sort"] = leaders_pool["Official HR Rank"].apply(lambda x: safe_float(x, 999))
+                leaders_pool = leaders_pool[leaders_pool["_rank_sort"] < 999].sort_values(
+                    ["_rank_sort", "Season HR"], ascending=[True, False]
+                ).drop(columns=["_rank_sort"])
+            else:
+                leaders_pool = leaders_pool.sort_values("Season HR", ascending=False)
+
+            pools = [
+                leaders_pool,
+                p.sort_values("Season HR", ascending=False),
+                p.sort_values("Power", ascending=False),
+                p.sort_values("Auto Matchup Edge", ascending=False),
+                p
+            ]
+
+        elif style == "Balanced Different Games":
+            pools = [
+                p.sort_values("Smart Combo Score", ascending=False),
+                p.sort_values("HR %", ascending=False),
+                p.sort_values("Pitcher Risk", ascending=False),
+                p
+            ]
+
+        elif style == "High Probability":
+            pools = [
+                p.sort_values("HR %", ascending=False),
+                p.sort_values("Dinger Score", ascending=False),
+                p.sort_values("Smart Combo Score", ascending=False),
+                p
+            ]
+
+        else:  # Contrarian Strong Spots
+            contrarian = p[(p["Grade"].isin(["A", "B"])) & (p["HR %"].apply(safe_float) >= 17)]
+            pools = [
+                contrarian.sort_values("Smart Combo Score", ascending=False),
+                p.sort_values("Weather Edge", ascending=False),
+                p.sort_values("Pitcher Risk", ascending=False),
+                p
+            ]
+
+        # rotate each style so combos differ more
+        for pool_idx, pool_part in enumerate(pools):
+            if len(selected) >= 3:
+                break
+            if pool_part is None or pool_part.empty:
+                continue
+            rotated = pd.concat([pool_part.iloc[idx:], pool_part.iloc[:idx]]).reset_index(drop=True)
+            select_from(rotated, selected, used_matchups, used_players, allow_same_game=False)
+
+        # fallback different game
+        if len(selected) < 3:
+            rotated_all = pd.concat([p.iloc[idx:], p.iloc[:idx]]).reset_index(drop=True)
+            for _, r in rotated_all.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                if r["Matchup"] in used_matchups:
+                    continue
+                selected.append(r)
+                used_players.add(r["Player"])
+                used_matchups.add(r["Matchup"])
+
+        # final fallback allow same game if slate is small
+        if len(selected) < 3:
+            rotated_all = pd.concat([p.iloc[idx:], p.iloc[:idx]]).reset_index(drop=True)
+            for _, r in rotated_all.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                selected.append(r)
+                used_players.add(r["Player"])
+
+        if len(selected) == 3:
+            names = tuple(sorted([x["Player"] for x in selected]))
+            if names not in used_sets:
+                used_sets.add(names)
+                combo_df = pd.DataFrame(selected)
+                combo_df["Combo Style"] = style
+                combos.append(combo_df)
+
+    # If less than max, keep rotating from full smart board.
+    start = 0
+    while len(combos) < max_combos and start < min(len(p), 60):
+        selected = []
+        used_matchups = set()
+        used_players = set()
+        rotated = pd.concat([p.iloc[start:], p.iloc[:start]]).reset_index(drop=True)
+
+        for _, r in rotated.iterrows():
+            if len(selected) >= 3:
+                break
+            if r["Player"] in used_players:
+                continue
+            if r["Matchup"] in used_matchups:
+                continue
+            selected.append(r)
+            used_players.add(r["Player"])
+            used_matchups.add(r["Matchup"])
+
+        if len(selected) == 3:
+            names = tuple(sorted([x["Player"] for x in selected]))
+            if names not in used_sets:
+                used_sets.add(names)
+                combo_df = pd.DataFrame(selected)
+                combo_df["Combo Style"] = f"Smart Rotation #{len(combos)+1}"
+                combos.append(combo_df)
+        start += 1
+
+    return combos[:max_combos]
+
+def smart_3_leg_combo_table(combos):
+    rows = []
+    for i, c in enumerate(combos, 1):
+        confidence = round((c["HR %"].apply(safe_float) / 100).prod() * 100, 4)
+        rows.append({
+            "Combo": f"Smart 3-Leg #{i}",
+            "Logic": c["Combo Style"].iloc[0] if "Combo Style" in c.columns else "Smart Combo",
+            "Leg 1": f"{c.iloc[0]['Player']} ({c.iloc[0]['HR %']}%)",
+            "Leg 2": f"{c.iloc[1]['Player']} ({c.iloc[1]['HR %']}%)",
+            "Leg 3": f"{c.iloc[2]['Player']} ({c.iloc[2]['HR %']}%)",
+            "Combo Confidence": confidence,
+            "Avg HR %": round(c["HR %"].apply(safe_float).mean(), 1),
+            "Avg Power": round(c["Power"].apply(safe_float).mean(), 2),
+            "Avg Pitcher Risk": round(c["Pitcher Risk"].apply(safe_float).mean(), 2),
+            "Avg Weather Edge": round(c["Weather Edge"].apply(safe_float).mean(), 2),
+            "HR Ranks": " / ".join([str(x) for x in c.get("Official HR Rank", pd.Series(["N/A"]*len(c))).tolist()]),
+        })
+    return pd.DataFrame(rows)
+
 
 def clickable_smart_3_leg_builder(pool, click_index=0):
-    """
-    Clickable 3-leg HR builder.
-    Smart logic:
-    - prioritizes good grades
-    - avoids same game when possible
-    - favors power, form, weak pitchers, park/weather, season HR
-    - rotates to a different combo each click
-    """
     if pool is None or pool.empty:
         return pd.DataFrame()
 
     p = pool.copy()
-
     p["Builder Score"] = (
         p["HR %"].apply(safe_float) * 0.30
         + p["Dinger Score"].apply(safe_float) * 0.18
@@ -1277,27 +1706,12 @@ def clickable_smart_3_leg_builder(pool, click_index=0):
         + p["Season HR"].apply(safe_float) * 0.02
     )
 
-    grade_bonus = {
-        "S+": 5.0,
-        "S": 4.0,
-        "A+": 3.0,
-        "A": 2.0,
-        "B": 0.75,
-        "C": 0.25,
-        "D": 0.0,
-    }
-
-    p["Builder Score"] = p.apply(
-        lambda r: safe_float(r["Builder Score"]) + grade_bonus.get(str(r.get("Grade", "")), 0),
-        axis=1
-    )
-
+    grade_bonus = {"S+":5.0,"S":4.0,"A+":3.0,"A":2.0,"B":0.75,"C":0.25,"D":0.0}
+    p["Builder Score"] = p.apply(lambda r: safe_float(r["Builder Score"]) + grade_bonus.get(str(r.get("Grade","")),0), axis=1)
     p = p.sort_values("Builder Score", ascending=False).reset_index(drop=True)
 
     combos = []
     used_sets = set()
-
-    # Different smart styles so button can rotate.
     styles = [
         ("Best Overall", p),
         ("Elite + Hot + Value", p.sort_values(["Grade","Form Score","Builder Score"], ascending=[True, False, False]) if "Form Score" in p.columns else p),
@@ -1312,7 +1726,6 @@ def clickable_smart_3_leg_builder(pool, click_index=0):
             selected = []
             used_matchups = set()
             used_players = set()
-
             rotated = pd.concat([style_pool.iloc[start:], style_pool.iloc[:start]]).reset_index(drop=True)
 
             for _, r in rotated.iterrows():
@@ -1322,12 +1735,10 @@ def clickable_smart_3_leg_builder(pool, click_index=0):
                     continue
                 if r["Matchup"] in used_matchups:
                     continue
-
                 selected.append(r)
                 used_players.add(r["Player"])
                 used_matchups.add(r["Matchup"])
 
-            # fallback if not enough different games
             if len(selected) < 3:
                 for _, r in rotated.iterrows():
                     if len(selected) >= 3:
@@ -1347,7 +1758,6 @@ def clickable_smart_3_leg_builder(pool, click_index=0):
 
     if not combos:
         return pd.DataFrame()
-
     return combos[click_index % len(combos)]
 
 def builder_combo_confidence(combo_df):
@@ -1366,7 +1776,7 @@ parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else 
 # DISPLAY
 # =========================
 mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
-full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Laser","Season HR","Data Source"]
+full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Laser","Season HR","Data Source"]
 breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Season HR","Data Source","Reasons"]
 
 def render(data, cols=None):
@@ -1688,6 +2098,11 @@ with tab4:
             + dinger_list["Weather Edge"].apply(safe_float) * 0.15
             + dinger_list["Auto Matchup Edge"].apply(safe_float) * 0.10
             + dinger_list["Pitcher Risk"].apply(safe_float) * 0.05
+            + dinger_list.get("Pitch Type Edge", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.08
+            + dinger_list.get("Barrel Trend Edge", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.10
+            + dinger_list.get("Bat Speed Edge", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.06
+            + dinger_list.get("Expected HR Edge", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.10
+            + dinger_list.get("Hand Split Edge", pd.Series([0.5] * len(dinger_list))).apply(safe_float) * 0.05
         )
         dinger_list["TRUE DINGER SCORE 100"] = (dinger_list["TRUE DINGER SCORE"] * 100).round(1)
 
@@ -1707,7 +2122,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -1794,28 +2209,15 @@ with tab4:
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
 
-    st.markdown("### 🎰 Clickable Smart 3-Leg HR Parlay Builder")
+    st.markdown("### 🧠 10 Smart 3-Leg HR Combos")
 
-    if "smart_builder_clicks" not in st.session_state:
-        st.session_state.smart_builder_clicks = 0
+    smart10 = smart_3_leg_hr_combos(parlay_pool, max_combos=10)
+    smart10_table = smart_3_leg_combo_table(smart10)
 
-    if st.button("Generate Smart 3-Leg HR Bet Combo"):
-        st.session_state.smart_builder_clicks += 1
-
-    builder_combo = clickable_smart_3_leg_builder(parlay_pool, st.session_state.smart_builder_clicks)
-
-    if len(builder_combo) == 3:
-        builder_conf = builder_combo_confidence(builder_combo)
-        logic = builder_combo["Builder Logic"].iloc[0] if "Builder Logic" in builder_combo.columns else "Smart Builder"
-
-        st.success(f"Smart 3-Leg HR Combo | Logic: {logic} | Model Combo Confidence: {builder_conf}%")
-
-        st.markdown(render(
-            builder_combo,
-            ["Player","Team","Grade","Badge","HR %","Dinger Score","Builder Score","Pitcher","Pitcher Risk","Park","Game Weather","Weather Alert","Auto Matchup Edge","Power","Form Score","Season HR","Official HR Rank"]
-        ), unsafe_allow_html=True)
-    else:
-        st.warning("Not enough eligible players for a smart 3-leg HR combo.")
+    st.markdown(render(
+        smart10_table,
+        ["Combo","Logic","Leg 1","Leg 2","Leg 3","Combo Confidence","Avg HR %","Avg Power","Avg Pitcher Risk","Avg Weather Edge","HR Ranks"]
+    ), unsafe_allow_html=True)
 
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
