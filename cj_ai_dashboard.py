@@ -13,6 +13,9 @@ def get_pybaseball_module():
     Add pybaseball to requirements.txt for live Baseball Savant/Statcast pulls:
     pybaseball
     """
+    if globals().get("FAST_MODE", True):
+        return None
+
     try:
         import pybaseball
         try:
@@ -26,6 +29,12 @@ def get_pybaseball_module():
 st.set_page_config(page_title="AON WORLD BETS HR MODEL ⚾️💣", layout="wide")
 
 REFRESH_SECONDS = 300
+
+# FAST MODE:
+# True = app loads fast. Uses real MLB.com stats + safe advanced proxies.
+# False = slower. Attempts real pybaseball/Statcast pulls.
+FAST_MODE = True
+MAX_REAL_STATCAST_PLAYERS = 20
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = time.time()
 if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
@@ -136,10 +145,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+st.caption("FAST_MODE is ON for faster loading. Set FAST_MODE=False only when you want slower real Statcast pulls.")
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
-<p>Advanced Dinger Edge • Pitch Matchup • Barrel Trend • Bat Speed • xHR • Splits • Bullpen • Roof • MLB.com HR Leaders</p>
+<p>FAST Advanced Dinger Edge • MLB.com HR Leaders • Cached Proxies • Optional Statcast Pulls</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -529,6 +539,9 @@ def get_recent_statcast_batter_by_id(player_id, days=14):
     Requires pybaseball in requirements.txt.
     Returns batted-ball data for the hitter over the last N days.
     """
+    if globals().get("FAST_MODE", True):
+        return pd.DataFrame()
+
     if not player_id:
         return pd.DataFrame()
 
@@ -551,6 +564,9 @@ def get_pitcher_statcast_by_id(player_id, days=45):
     """
     Real Baseball Savant/Statcast pull via pybaseball for pitcher pitch mix.
     """
+    if globals().get("FAST_MODE", True):
+        return pd.DataFrame()
+
     if not player_id:
         return pd.DataFrame()
 
@@ -1212,9 +1228,10 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
     if batter_id is None:
         batter_id = roster_id_lookup.get(norm(player_name), None)
 
-    live_batter = hitter_live_season(batter_id)
-    if live_batter.get("season_hr") is not None:
-        m["Season HR"] = int(live_batter["season_hr"])
+    if not FAST_MODE:
+        live_batter = hitter_live_season(batter_id)
+        if live_batter.get("season_hr") is not None:
+            m["Season HR"] = int(live_batter["season_hr"])
 
     live = pitcher_live(pitcher_id)
     pr = pitcher_risk(live)
@@ -2452,7 +2469,7 @@ with tab6:
     st.write("Official MLB.com/stats HR leaders pulled:", len(official_hr_leaders) if "official_hr_leaders" in globals() else 0)
     st.write("HR leaderboard source:", "https://www.mlb.com/stats/")
     st.write("pybaseball installed:", get_pybaseball_module() is not None)
-    st.write("Advanced data source:", "Real Statcast via pybaseball when installed; fallback otherwise")
+    st.write("Advanced data source:", "FAST_MODE on = MLB.com stats + cached proxies; turn FAST_MODE=False for slower real Statcast pulls")
     st.write("Season HR fix:", "Uses MLB player ID live season hitting stats when available")
     st.write("Missing MLB players injected:", mlb_injected_count)
     st.write("Game statuses:")
