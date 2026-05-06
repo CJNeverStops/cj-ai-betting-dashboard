@@ -14,7 +14,9 @@ def get_pybaseball_module():
     Add pybaseball to requirements.txt for live Baseball Savant/Statcast pulls:
     pybaseball
     """
-    if globals().get("FAST_MODE", True):
+    # FAST_MODE normally disables pybaseball, but Advanced Top 25 mode can allow
+    # real pulls only for selected top candidates after initial board is built.
+    if globals().get("FAST_MODE", True) and not st.session_state.get("allow_top25_statcast", False):
         return None
 
     try:
@@ -36,6 +38,7 @@ REFRESH_SECONDS = 300
 # False = slower. Attempts real pybaseball/Statcast pulls.
 FAST_MODE = True
 MAX_REAL_STATCAST_PLAYERS = 20
+ADVANCED_ONLY_TOP25 = True
 
 # SHARP BETTING UPGRADE:
 # Optional CSV support:
@@ -174,7 +177,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.caption("FAST_MODE is ON for faster loading. Set FAST_MODE=False only when you want slower real Statcast pulls.")
+st.caption("FAST_MODE is ON. Top 25 advanced pass can pull heavier stats only for the Top 25 when pybaseball is installed.")
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
@@ -1765,6 +1768,109 @@ top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
 
+def apply_advanced_edges_to_top25(base_df):
+    """
+    Two-pass speed system:
+    1. Build full board fast.
+    2. Only apply heavier advanced Statcast factors to Top 25 candidates.
+    3. Re-score/re-rank just those players.
+    """
+    if base_df is None or base_df.empty:
+        return base_df
+
+    if not ADVANCED_ONLY_TOP25:
+        return base_df
+
+    top_names = set(base_df.head(25)["Player"].astype(str).apply(norm).tolist())
+
+    # Let optional pybaseball work only during this pass.
+    st.session_state.allow_top25_statcast = True
+
+    updated_rows = []
+    for _, row in base_df.iterrows():
+        if norm(row.get("Player", "")) not in top_names:
+            updated_rows.append(row)
+            continue
+
+        player = row.get("Player", "")
+        b = find_player(batters, player)
+
+        batter_id = None
+        if b is not None:
+            id_col_top = find_col(pd.DataFrame([b]), ["player_id", "id", "mlb_id"])
+            if id_col_top:
+                batter_id = b.get(id_col_top, None)
+        if batter_id is None:
+            batter_id = roster_id_lookup.get(norm(player), None)
+
+        pitcher_id = None
+        # Match pitcher name back to today's schedule probable pitcher IDs.
+        for g in games:
+            if row.get("Pitcher", "") == g.get("home_p", ""):
+                pitcher_id = g.get("home_p_id")
+                break
+            if row.get("Pitcher", "") == g.get("away_p", ""):
+                pitcher_id = g.get("away_p_id")
+                break
+
+        pitch_edge = calculate_pitch_matchup_edge(
+            get_pitcher_arsenal(pitcher_id),
+            get_batter_pitch_values(player, batter_id)
+        )
+        barrel_data = get_recent_barrel_trends(player, batter_id)
+        barrel_edge = barrel_trend_score(barrel_data)
+        bat_speed_data = get_bat_speed(player, batter_id)
+        bat_speed_edge = bat_speed_score(bat_speed_data)
+        xhr_data = expected_hr_data(player, row.get("Season HR", 0), batter_id)
+        xhr_edge = expected_hr_score(xhr_data)
+        split_edge = handedness_split_edge(player, "R", batter_id)
+
+        # Controlled re-score boost on original 0-42 scale.
+        original_score = safe_float(row.get("Dinger Score", 0))
+        boost = (
+            (pitch_edge - .50) * 3.0
+            + (barrel_edge - .50) * 4.0
+            + (bat_speed_edge - .50) * 2.0
+            + (xhr_edge - .50) * 3.0
+            + (split_edge - .50) * 1.5
+        )
+        new_score = round(clamp(original_score + boost, 0, 42), 1)
+
+        row["Pitch Type Edge"] = round(pitch_edge, 3)
+        row["Barrel Trend Edge"] = round(barrel_edge, 3)
+        row["Bat Speed Edge"] = round(bat_speed_edge, 3)
+        row["Expected HR Edge"] = round(xhr_edge, 3)
+        row["Hand Split Edge"] = round(split_edge, 3)
+        row["Statcast Source"] = barrel_data.get("statcast_source", "fallback/top25")
+        row["Dinger Score"] = new_score
+        row["Grade"] = grade_score(new_score)
+        row["Badge"] = badge_score(new_score)
+
+        # Slight HR % adjustment only for top25 advanced pass.
+        hrp = safe_float(row.get("HR %", 0))
+        adv_adj = (
+            (pitch_edge - .50) * 2.0
+            + (barrel_edge - .50) * 3.0
+            + (xhr_edge - .50) * 2.0
+        )
+        row["HR %"] = round(clamp(hrp + adv_adj, 1, 40), 1)
+
+        updated_rows.append(row)
+
+    st.session_state.allow_top25_statcast = False
+
+    out = pd.DataFrame(updated_rows)
+    out = out.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+    return out
+
+# Apply heavy/real advanced factors only to Top 25, then rebuild parlay pool.
+df = apply_advanced_edges_to_top25(df)
+parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
+best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
+top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
+
+
 # =========================
 # STRIKEOUT MODEL
 # =========================
@@ -2797,6 +2903,39 @@ with tab4:
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
 
+    st.markdown("### 🎰 Clickable Smart 3-Leg HR Parlay Builder")
+
+    if "smart_builder_clicks" not in st.session_state:
+        st.session_state.smart_builder_clicks = 0
+
+    if st.button("Generate Smart 3-Leg HR Bet Combo"):
+        st.session_state.smart_builder_clicks += 1
+
+    builder_combo = clickable_smart_3_leg_builder(parlay_pool, st.session_state.smart_builder_clicks)
+
+    if len(builder_combo) == 3:
+        builder_conf = builder_combo_confidence(builder_combo)
+        logic = builder_combo["Builder Logic"].iloc[0] if "Builder Logic" in builder_combo.columns else "Smart Builder"
+
+        st.success(f"Smart 3-Leg HR Combo | Logic: {logic} | Model Combo Confidence: {builder_conf}%")
+
+        builder_cols = [
+            "Player","Team","Grade","Badge","HR %","Dinger Score","Builder Score",
+            "Pitcher","Pitcher Risk","Park","Game Weather","Weather Alert",
+            "Auto Matchup Edge","Power","Form Score","Season HR","Official HR Rank"
+        ]
+
+        advanced_cols = [
+            "Pitch Type Edge","Barrel Trend Edge","Expected HR Edge","Bat Speed Edge",
+            "Hand Split Edge","Bullpen HR Edge","Roof Status"
+        ]
+
+        builder_cols += [c for c in advanced_cols if c in builder_combo.columns]
+
+        st.markdown(render(builder_combo, builder_cols), unsafe_allow_html=True)
+    else:
+        st.warning("Not enough eligible players for a smart 3-leg HR combo.")
+
     st.markdown("### 🧠 10 Smart 3-Leg HR Combos")
 
     smart10 = smart_3_leg_hr_combos(parlay_pool, max_combos=10)
@@ -2843,6 +2982,7 @@ with tab6:
     st.write("pybaseball installed:", get_pybaseball_module() is not None)
     st.write("Advanced data source:", "FAST_MODE on = MLB.com stats + cached proxies; turn FAST_MODE=False for slower real Statcast pulls")
     st.write("Season HR fix:", "Uses MLB player ID live season hitting stats when available")
+    st.write("Advanced factors status:", "Exact Statcast requires pybaseball + FAST_MODE=False; otherwise model uses fast cached proxies.")
     st.write("Missing MLB players injected:", mlb_injected_count)
     st.write("Game statuses:")
     st.dataframe(pd.DataFrame(games_all)[["away","home","park","status"]] if games_all else pd.DataFrame(), use_container_width=True)
