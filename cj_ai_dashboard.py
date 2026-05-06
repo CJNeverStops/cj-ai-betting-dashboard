@@ -1836,6 +1836,42 @@ top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
 
+
+def weather_score_from_alert(weather_alert, weather_edge):
+    alert = str(weather_alert).lower()
+    edge = safe_float(weather_edge, .50)
+
+    score = edge
+    if "warm" in alert:
+        score += .10
+    if "wind" in alert:
+        score += .12
+    if "boost" in alert:
+        score += .08
+    if "cold" in alert:
+        score -= .10
+    if "downgrade" in alert:
+        score -= .08
+    if "vortex" in alert:
+        score -= .06
+
+    return round(clamp(score, 0, 1), 3)
+
+def today_environment_score(row):
+    park = safe_float(row.get("Park Edge", .50), .50)
+    weather = weather_score_from_alert(row.get("Weather Alert", ""), row.get("Weather Edge", .50))
+    lineup = lineup_boost(row.get("Order", "—"), row.get("Lineup", "Projected")) if "lineup_boost" in globals() else .50
+    power = safe_float(row.get("Power", .50), .50)
+
+    return round(clamp(
+        park * .30
+        + weather * .35
+        + lineup * .15
+        + power * .20,
+        0, 1
+    ), 3)
+
+
 def apply_advanced_edges_to_top25(base_df):
     """
     Two-pass speed system:
@@ -1893,14 +1929,17 @@ def apply_advanced_edges_to_top25(base_df):
         xhr_edge = expected_hr_score(xhr_data)
         split_edge = handedness_split_edge(player, "R", batter_id)
 
-        # Controlled re-score boost on original 0-42 scale.
+        # Daily-environment enhanced re-score on original 0-42 scale.
         original_score = safe_float(row.get("Dinger Score", 0))
+        env_edge = today_environment_score(row)
+
         boost = (
             (pitch_edge - .50) * 3.0
             + (barrel_edge - .50) * 4.0
             + (bat_speed_edge - .50) * 2.0
             + (xhr_edge - .50) * 3.0
             + (split_edge - .50) * 1.5
+            + (env_edge - .50) * 4.5
         )
         new_score = round(clamp(original_score + boost, 0, 42), 1)
 
@@ -1909,6 +1948,8 @@ def apply_advanced_edges_to_top25(base_df):
         row["Bat Speed Edge"] = round(bat_speed_edge, 3)
         row["Expected HR Edge"] = round(xhr_edge, 3)
         row["Hand Split Edge"] = round(split_edge, 3)
+        row["Today Environment Edge"] = round(env_edge, 3)
+        row["Weather Score"] = weather_score_from_alert(row.get("Weather Alert", ""), row.get("Weather Edge", .50))
         row["Statcast Source"] = barrel_data.get("statcast_source", "fallback/top25")
         row["Dinger Score"] = new_score
         row["Grade"] = grade_score(new_score)
@@ -1920,6 +1961,7 @@ def apply_advanced_edges_to_top25(base_df):
             (pitch_edge - .50) * 2.0
             + (barrel_edge - .50) * 3.0
             + (xhr_edge - .50) * 2.0
+            + (env_edge - .50) * 2.5
         )
         row["HR %"] = round(clamp(hrp + adv_adj, 1, 40), 1)
 
@@ -1933,7 +1975,19 @@ def apply_advanced_edges_to_top25(base_df):
 
 # Apply heavy/real advanced factors only to Top 25, then rebuild parlay pool.
 df = apply_advanced_edges_to_top25(df)
-parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+
+df["Daily Dinger Score"] = (
+    df["HR %"].apply(safe_float) * 0.22
+    + df["Dinger Score"].apply(safe_float) * 0.20
+    + df["Power"].apply(safe_float) * 20 * 0.14
+    + df.get("Form Score", pd.Series([0.5] * len(df))).apply(safe_float) * 20 * 0.10
+    + df["Pitcher Risk"].apply(safe_float) * 20 * 0.10
+    + df["Park Edge"].apply(safe_float) * 20 * 0.08
+    + df["Weather Edge"].apply(safe_float) * 20 * 0.08
+    + df.get("Today Environment Edge", pd.Series([0.5] * len(df))).apply(safe_float) * 20 * 0.08
+)
+df = df.sort_values("Daily Dinger Score", ascending=False).reset_index(drop=True)
+parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Daily Dinger Score", ascending=False).reset_index(drop=True)
 top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
@@ -2436,6 +2490,7 @@ def clickable_smart_3_leg_builder(pool, click_index=0):
         + p["Park Edge"].apply(safe_float) * 20 * 0.05
         + p["Weather Edge"].apply(safe_float) * 20 * 0.05
         + p["Season HR"].apply(safe_float) * 0.02
+        + p.get("Daily Dinger Score", pd.Series([0] * len(p))).apply(safe_float) * 0.08
     )
 
     grade_bonus = {"S+":5.0,"S":4.0,"A+":3.0,"A":2.0,"B":0.75,"C":0.25,"D":0.0}
@@ -2836,7 +2891,7 @@ with tab3:
 with tab4:
     st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
 
-    st.markdown("<div class='note'>Top dinger targets now rank from the full injected MLB player pool for today’s games, then weight Power, Recent Form, Park, Weather, Matchup Edge, and Pitcher HR weakness.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Top dinger targets now combine true HR probability with today environment: park, weather, wind boost, barrel trend, pitch matchup, handedness, power, form, and pitcher HR weakness.</div>", unsafe_allow_html=True)
 
     st.markdown("### 📝 Top 25 Most Likely To Go Yard")
 
