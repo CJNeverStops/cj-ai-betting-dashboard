@@ -35,6 +35,13 @@ REFRESH_SECONDS = 300
 # False = slower. Attempts real pybaseball/Statcast pulls.
 FAST_MODE = True
 MAX_REAL_STATCAST_PLAYERS = 20
+
+# SHARP BETTING UPGRADE:
+# Optional CSV support:
+# sportsbook_hr_odds.csv columns:
+# Player, Book Odds, Open Odds
+# Example odds: +450, -110
+SPORTSBOOK_ODDS_FILE = "sportsbook_hr_odds.csv"
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = time.time()
 if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
@@ -149,7 +156,7 @@ st.caption("FAST_MODE is ON for faster loading. Set FAST_MODE=False only when yo
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
-<p>FAST Advanced Dinger Edge • MLB.com HR Leaders • Cached Proxies • Optional Statcast Pulls</p>
+<p>Sharp Upgrade • EV/Fair Odds • Value Board • Steam Tracking • Lineup Boost • MLB.com HR Leaders</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -313,6 +320,132 @@ def is_game_available_for_parlays(status):
     s = str(status).lower().strip()
     bad = ["in progress", "live", "final", "game over", "completed early", "postponed", "cancelled"]
     return not any(x in s for x in bad)
+
+
+# =========================
+# SHARP BETTING / ODDS HELPERS
+# =========================
+def american_to_prob(odds):
+    try:
+        odds = float(str(odds).replace("+", "").strip())
+        if odds > 0:
+            return 100 / (odds + 100)
+        return abs(odds) / (abs(odds) + 100)
+    except Exception:
+        return None
+
+def prob_to_american(prob):
+    try:
+        prob = float(prob)
+        if prob <= 0:
+            return "N/A"
+        if prob >= 1:
+            return "-100000"
+        if prob >= .5:
+            return int(round(-(prob / (1 - prob)) * 100))
+        return int(round(((1 - prob) / prob) * 100))
+    except Exception:
+        return "N/A"
+
+@st.cache_data(ttl=300)
+def load_sportsbook_hr_odds():
+    try:
+        odds_df = pd.read_csv(SPORTSBOOK_ODDS_FILE)
+        odds_df["_norm"] = odds_df["Player"].astype(str).apply(norm)
+        return odds_df
+    except Exception:
+        return pd.DataFrame(columns=["Player", "Book Odds", "Open Odds", "_norm"])
+
+def lookup_player_odds(player_name):
+    odds_df = load_sportsbook_hr_odds()
+    if odds_df.empty:
+        return {"Book Odds": "N/A", "Open Odds": "N/A", "Book Implied %": "N/A", "EV Edge %": "N/A", "Steam": "N/A"}
+
+    key = norm(player_name)
+    hit = odds_df[odds_df["_norm"] == key]
+
+    if hit.empty:
+        # soft fallback: last name + first initial
+        parts = key.split()
+        if len(parts) >= 2:
+            first_initial = parts[0][0]
+            last = parts[-1]
+            hit = odds_df[odds_df["_norm"].apply(lambda x: len(str(x).split()) >= 2 and str(x).split()[-1] == last and str(x).split()[0][0] == first_initial)]
+
+    if hit.empty:
+        return {"Book Odds": "N/A", "Open Odds": "N/A", "Book Implied %": "N/A", "EV Edge %": "N/A", "Steam": "N/A"}
+
+    r = hit.iloc[0]
+    book_odds = r.get("Book Odds", "N/A")
+    open_odds = r.get("Open Odds", "N/A")
+
+    implied = american_to_prob(book_odds)
+    open_imp = american_to_prob(open_odds)
+
+    if implied is None:
+        implied_pct = "N/A"
+    else:
+        implied_pct = round(implied * 100, 1)
+
+    steam = "N/A"
+    if implied is not None and open_imp is not None:
+        diff = (implied - open_imp) * 100
+        if diff >= 2:
+            steam = "🔥 Steam In"
+        elif diff <= -2:
+            steam = "❄️ Drift Out"
+        else:
+            steam = "Neutral"
+
+    return {
+        "Book Odds": book_odds,
+        "Open Odds": open_odds,
+        "Book Implied %": implied_pct,
+        "EV Edge %": "N/A",
+        "Steam": steam
+    }
+
+def calculate_ev_edge(model_prob_pct, book_implied_pct):
+    if book_implied_pct == "N/A":
+        return "N/A"
+    try:
+        return round(float(model_prob_pct) - float(book_implied_pct), 1)
+    except Exception:
+        return "N/A"
+
+def value_badge(edge):
+    if edge == "N/A":
+        return "No Odds"
+    try:
+        e = float(edge)
+        if e >= 8:
+            return "💰 Strong Value"
+        if e >= 4:
+            return "✅ Value"
+        if e >= 1:
+            return "🟡 Small Edge"
+        if e <= -4:
+            return "🔻 Bad Price"
+        return "Fair"
+    except Exception:
+        return "No Odds"
+
+def lineup_boost(order, lineup):
+    if not isinstance(order, int):
+        return .50
+    base = 1 - scale01(order, 1, 9)
+    # Confirmed lineup is more trustworthy than projected.
+    if str(lineup).lower() == "final":
+        base = clamp(base + .08, 0, 1)
+    if order <= 5:
+        base = clamp(base + .05, 0, 1)
+    return base
+
+@st.cache_data(ttl=300)
+def bullpen_fatigue_proxy(team_name):
+    # Safe proxy. Later: use previous 3 days bullpen pitches/innings.
+    return {"Bullpen Fatigue": "Neutral", "Bullpen Fatigue Edge": .50}
+
 
 # =========================
 # PARK + WEATHER
@@ -1241,7 +1374,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
 
     park_edge = scale01(park_factor, .82, 1.30)
     weather_edge = scale01(weather["factor"], .88, 1.18)
-    lineup_edge = 1 - scale01(order, 1, 9) if isinstance(order, int) else .50
+    lineup_edge = lineup_boost(order, lineup)
     me, me_note = auto_matchup_edge(m, live, park_edge, weather_edge, lineup_edge)
 
     # Advanced dinger factors
@@ -1317,6 +1450,14 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         .010, .40
     )
 
+    odds_info = lookup_player_odds(player_name)
+    ev_edge = calculate_ev_edge(round(hr_prob * 100, 1), odds_info.get("Book Implied %", "N/A"))
+    fair_odds = prob_to_american(hr_prob)
+    val_badge = value_badge(ev_edge)
+    odds_info["EV Edge %"] = ev_edge
+
+    bullpen_fatigue = bullpen_fatigue_proxy(team)
+
     hit_prob = clamp(.28 + m["Contact"] * .42, .18, .82)
     tb_prob = clamp(.20 + (m["Power"] * .43 + m["Contact"] * .22 + m["Laser"] * .20 + me * .15) * .48, .10, .76)
     rbi_prob = clamp(.12 + (m["Power"] * .43 + m["Laser"] * .17 + pr * .25 + me * .15) * .42, .06, .62)
@@ -1330,7 +1471,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         f"Park: {park} {park_note(park_factor)} ({park_factor}) • "
         f"Weather: {weather['note']} {weather['temp']}°F wind {weather['wind']}mph {weather['dir']} • "
         f"Power {m['Power']} • Laser {m['Laser']} • PitchEdge {round(pitch_edge,2)} • BarrelTrend {round(barrel_edge,2)} • xHR {round(xhr_edge,2)} • Roof {roof_data.get('roof_status','N/A')} • estSLG {m['estSLG']} • ISO {m['ISO']} • "
-        f"Season HR {m['Season HR']} • HR Rank {m.get('Official HR Rank','N/A')} • Source {m['Data Source']}"
+        f"Season HR {m['Season HR']} • HR Rank {m.get('Official HR Rank','N/A')} • Fair Odds {fair_odds} • Book Odds {odds_info.get('Book Odds','N/A')} • Value {val_badge} • Steam {odds_info.get('Steam','N/A')} • Source {m['Data Source']}"
     )
 
     return {
@@ -1347,6 +1488,15 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Grade": grade_score(dinger_score),
         "Badge": badge_score(dinger_score),
         "HR %": round(hr_prob * 100, 1),
+        "Fair Odds": fair_odds,
+        "Book Odds": odds_info.get("Book Odds", "N/A"),
+        "Open Odds": odds_info.get("Open Odds", "N/A"),
+        "Book Implied %": odds_info.get("Book Implied %", "N/A"),
+        "EV Edge %": ev_edge,
+        "Value Badge": val_badge,
+        "Steam": odds_info.get("Steam", "N/A"),
+        "Bullpen Fatigue": bullpen_fatigue.get("Bullpen Fatigue", "Neutral"),
+        "Bullpen Fatigue Edge": bullpen_fatigue.get("Bullpen Fatigue Edge", .50),
         "Hit %": round(hit_prob * 100, 1),
         "TB %": round(tb_prob * 100, 1),
         "RBI %": round(rbi_prob * 100, 1),
@@ -1994,9 +2144,9 @@ parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else 
 # =========================
 # DISPLAY
 # =========================
-mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
+mobile_cols = ["Player","Team","Grade","Badge","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
 full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Laser","Season HR","Data Source"]
-breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Season HR","Data Source","Reasons"]
+breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Auto Matchup Edge","Season HR","Data Source","Reasons"]
 
 def render(data, cols=None):
     if data is None or data.empty:
@@ -2033,6 +2183,26 @@ def render(data, cols=None):
                     style = "background:rgba(239,68,68,.22);font-weight:900;"
                 else:
                     style = "background:rgba(234,179,8,.16);font-weight:900;"
+            elif c == "Value Badge":
+                val = str(v)
+                if "Strong Value" in val:
+                    style = "background:rgba(34,197,94,.35);font-weight:900;"
+                elif "Value" in val:
+                    style = "background:rgba(34,197,94,.24);font-weight:900;"
+                elif "Small" in val:
+                    style = "background:rgba(234,179,8,.22);font-weight:900;"
+                elif "Bad" in val:
+                    style = "background:rgba(239,68,68,.24);font-weight:900;"
+                else:
+                    style = "background:rgba(148,163,184,.16);font-weight:900;"
+            elif c == "Steam":
+                val = str(v)
+                if "Steam" in val:
+                    style = "background:rgba(34,197,94,.22);font-weight:900;"
+                elif "Drift" in val:
+                    style = "background:rgba(239,68,68,.20);font-weight:900;"
+                else:
+                    style = "background:rgba(148,163,184,.14);font-weight:900;"
             elif c == "Bet Badge":
                 val = str(v)
                 if "Strong" in val:
@@ -2341,7 +2511,17 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Steam","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+
+
+        st.markdown("### 💰 Best Value HR Bets")
+        value_board = dinger_list[dinger_list["EV Edge %"].astype(str) != "N/A"].copy()
+        if not value_board.empty:
+            value_board["EV Edge Sort"] = value_board["EV Edge %"].apply(safe_float)
+            value_board = value_board.sort_values("EV Edge Sort", ascending=False)
+            st.markdown(render(value_board.head(10), ["Player","Team","HR %","Fair Odds","Book Odds","Book Implied %","EV Edge %","Value Badge","Steam","Pitcher","Dinger Score","Grade"]), unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='note'>Upload sportsbook_hr_odds.csv to unlock EV/value betting board.</div>", unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -2459,6 +2639,7 @@ with tab5:
 
 with tab6:
     st.write("Players scored:", len(df))
+    st.write("Sportsbook odds loaded:", len(load_sportsbook_hr_odds()))
     st.write("Grade distribution:", df["Grade"].value_counts().to_dict() if "Grade" in df.columns else {})
     st.write("Dynamic parlay pool players:", len(parlay_pool))
     st.write("Pitchers scored:", len(k_df))
