@@ -1,4 +1,5 @@
 import math
+import os
 import time
 import unicodedata
 from datetime import datetime, timedelta
@@ -42,6 +43,27 @@ MAX_REAL_STATCAST_PLAYERS = 20
 # Player, Book Odds, Open Odds
 # Example odds: +450, -110
 SPORTSBOOK_ODDS_FILE = "sportsbook_hr_odds.csv"
+
+# Automatic sportsbook odds pull through The Odds API.
+# Add this to Streamlit secrets or environment:
+# ODDS_API_KEY = "your_key_here"
+# Streamlit Cloud: Settings > Secrets
+ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", os.getenv("ODDS_API_KEY", ""))
+ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+ODDS_SPORT = "baseball_mlb"
+ODDS_MARKET = "batter_home_runs"
+ODDS_REGIONS = "us"
+ODDS_FORMAT = "american"
+PREFERRED_BOOKMAKERS = [
+    "thescorebet",
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "caesars",
+    "espnbet",
+    "betrivers",
+    "fanatics",
+]
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = time.time()
 if time.time() - st.session_state.last_refresh > REFRESH_SECONDS:
@@ -156,7 +178,7 @@ st.caption("FAST_MODE is ON for faster loading. Set FAST_MODE=False only when yo
 st.markdown("""
 <div class='hero'>
 <h1>🔥 AON WORLD BETS HR MODEL ⚾️💣</h1>
-<p>Sharp Upgrade • EV/Fair Odds • Value Board • Steam Tracking • Lineup Boost • MLB.com HR Leaders</p>
+<p>Sharp Dinger Model • MLB.com HR Leaders • Dynamic Parlays • Live Matchup Edge</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -348,44 +370,207 @@ def prob_to_american(prob):
         return "N/A"
 
 @st.cache_data(ttl=300)
-def load_sportsbook_hr_odds():
+def get_mlb_odds_events():
+    """
+    Pull upcoming MLB events from The Odds API.
+    """
+    if not ODDS_API_KEY:
+        return []
+
+    url = f"{ODDS_API_BASE}/sports/{ODDS_SPORT}/events"
+    params = {"apiKey": ODDS_API_KEY}
+
+    try:
+        data = requests.get(url, params=params, timeout=20).json()
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+@st.cache_data(ttl=300)
+def get_event_hr_prop_odds(event_id):
+    """
+    Pull batter_home_runs prop odds for one MLB event.
+    Player props are event-by-event.
+    """
+    if not ODDS_API_KEY or not event_id:
+        return []
+
+    url = f"{ODDS_API_BASE}/sports/{ODDS_SPORT}/events/{event_id}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": ODDS_REGIONS,
+        "markets": ODDS_MARKET,
+        "oddsFormat": ODDS_FORMAT,
+    }
+
+    try:
+        data = requests.get(url, params=params, timeout=25).json()
+        if isinstance(data, dict):
+            return data.get("bookmakers", [])
+        return []
+    except Exception:
+        return []
+
+def pick_best_bookmaker_price(book_prices):
+    """
+    Select a preferred sportsbook if available, otherwise best price.
+    """
+    if not book_prices:
+        return None
+
+    for pref in PREFERRED_BOOKMAKERS:
+        for b in book_prices:
+            if str(b.get("bookmaker_key", "")).lower() == pref:
+                return b
+
+    # Best HR price = highest positive/least negative American odds.
+    return sorted(book_prices, key=lambda x: safe_float(x.get("price", -9999), -9999), reverse=True)[0]
+
+@st.cache_data(ttl=300)
+def load_auto_hr_odds_from_api():
+    """
+    Automatic HR odds pull.
+    Returns CSV-like dataframe:
+    Player, Book Odds, Open Odds, Bookmaker, Odds Source
+    """
+    events = get_mlb_odds_events()
+    rows_by_player = {}
+
+    for ev in events:
+        event_id = ev.get("id")
+        home_team = ev.get("home_team", "")
+        away_team = ev.get("away_team", "")
+        matchup_name = f"{away_team} @ {home_team}"
+
+        bookmakers = get_event_hr_prop_odds(event_id)
+
+        for book in bookmakers:
+            book_key = book.get("key", "")
+            book_title = book.get("title", book_key)
+
+            for market in book.get("markets", []):
+                if market.get("key") != ODDS_MARKET:
+                    continue
+
+                for outcome in market.get("outcomes", []):
+                    player = outcome.get("description") or outcome.get("name")
+                    price = outcome.get("price", None)
+                    point = outcome.get("point", None)
+                    side = outcome.get("name", "")
+
+                    # For HR props, keep Over/Yes style entries only.
+                    side_l = str(side).lower()
+                    if side_l not in ["over", "yes"] and "over" not in side_l and "yes" not in side_l:
+                        continue
+
+                    if not player or price is None:
+                        continue
+
+                    key = norm(player)
+
+                    book_price = {
+                        "bookmaker_key": book_key,
+                        "Bookmaker": book_title,
+                        "price": price,
+                        "Matchup Odds": matchup_name,
+                        "Point": point,
+                    }
+
+                    if key not in rows_by_player:
+                        rows_by_player[key] = {
+                            "Player": player,
+                            "_norm": key,
+                            "prices": [],
+                        }
+
+                    rows_by_player[key]["prices"].append(book_price)
+
+    rows = []
+    for _, item in rows_by_player.items():
+        chosen = pick_best_bookmaker_price(item["prices"])
+        if not chosen:
+            continue
+
+        rows.append({
+            "Player": item["Player"],
+            "_norm": item["_norm"],
+            "Book Odds": chosen.get("price"),
+            "Open Odds": "N/A",
+            "Bookmaker": chosen.get( "N/A"),
+            "Odds Source": "The Odds API auto",
+            "Matchup Odds": chosen.get("Matchup Odds", ""),
+            "Point": chosen.get("Point", ""),
+        })
+
+    return pd.DataFrame(rows)
+
+@st.cache_data(ttl=300)
+def load_manual_sportsbook_hr_odds():
     try:
         odds_df = pd.read_csv(SPORTSBOOK_ODDS_FILE)
         odds_df["_norm"] = odds_df["Player"].astype(str).apply(norm)
+        if "Bookmaker" not in odds_df.columns:
+            odds_df["Bookmaker"] = "Manual CSV"
+        if "Odds Source" not in odds_df.columns:
+            odds_df["Odds Source"] = "sportsbook_hr_odds.csv"
+        if "Open Odds" not in odds_df.columns:
+            odds_df["Open Odds"] = "N/A"
         return odds_df
     except Exception:
-        return pd.DataFrame(columns=["Player", "Book Odds", "Open Odds", "_norm"])
+        return pd.DataFrame(columns=["Player",  "Open Odds",  "Odds Source", "_norm"])
+
+@st.cache_data(ttl=300)
+def load_sportsbook_hr_odds():
+    """
+    Automatic first, manual CSV fallback.
+    """
+    auto_df = load_auto_hr_odds_from_api()
+
+    if auto_df is not None and not auto_df.empty:
+        return auto_df
+
+    return load_manual_sportsbook_hr_odds()
 
 def lookup_player_odds(player_name):
     odds_df = load_sportsbook_hr_odds()
+    empty = {
+        "Book Odds": "N/A",
+        "Open Odds": "N/A",
+        "Book Implied %": "N/A",
+        "EV Edge %": "N/A",
+        "Steam": "N/A",
+        "Bookmaker": "N/A",
+        "Odds Source": "No odds",
+    }
+
     if odds_df.empty:
-        return {"Book Odds": "N/A", "Open Odds": "N/A", "Book Implied %": "N/A", "EV Edge %": "N/A", "Steam": "N/A"}
+        return empty
 
     key = norm(player_name)
     hit = odds_df[odds_df["_norm"] == key]
 
     if hit.empty:
-        # soft fallback: last name + first initial
         parts = key.split()
         if len(parts) >= 2:
             first_initial = parts[0][0]
             last = parts[-1]
-            hit = odds_df[odds_df["_norm"].apply(lambda x: len(str(x).split()) >= 2 and str(x).split()[-1] == last and str(x).split()[0][0] == first_initial)]
+            hit = odds_df[odds_df["_norm"].apply(
+                lambda x: len(str(x).split()) >= 2 and str(x).split()[-1] == last and str(x).split()[0][0] == first_initial
+            )]
 
     if hit.empty:
-        return {"Book Odds": "N/A", "Open Odds": "N/A", "Book Implied %": "N/A", "EV Edge %": "N/A", "Steam": "N/A"}
+        return empty
 
     r = hit.iloc[0]
-    book_odds = r.get("Book Odds", "N/A")
+    book_odds = r.get( "N/A")
     open_odds = r.get("Open Odds", "N/A")
 
     implied = american_to_prob(book_odds)
     open_imp = american_to_prob(open_odds)
 
-    if implied is None:
-        implied_pct = "N/A"
-    else:
-        implied_pct = round(implied * 100, 1)
+    implied_pct = round(implied * 100, 1) if implied is not None else "N/A"
 
     steam = "N/A"
     if implied is not None and open_imp is not None:
@@ -402,7 +587,9 @@ def lookup_player_odds(player_name):
         "Open Odds": open_odds,
         "Book Implied %": implied_pct,
         "EV Edge %": "N/A",
-        "Steam": steam
+        "Steam": steam,
+        "Bookmaker": r.get( "N/A"),
+        "Odds Source": r.get("Odds Source", "N/A"),
     }
 
 def calculate_ev_edge(model_prob_pct, book_implied_pct):
@@ -1451,7 +1638,7 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
     )
 
     odds_info = lookup_player_odds(player_name)
-    ev_edge = calculate_ev_edge(round(hr_prob * 100, 1), odds_info.get("Book Implied %", "N/A"))
+    ev_edge = calculate_ev_edge(round(hr_prob * 100, 1), odds_info.get( "N/A"))
     fair_odds = prob_to_american(hr_prob)
     val_badge = value_badge(ev_edge)
     odds_info["EV Edge %"] = ev_edge
@@ -1489,12 +1676,14 @@ def score_row(player_name, team, matchup, pitcher_name, pitcher_id, park, game_s
         "Badge": badge_score(dinger_score),
         "HR %": round(hr_prob * 100, 1),
         "Fair Odds": fair_odds,
-        "Book Odds": odds_info.get("Book Odds", "N/A"),
+        "Book Odds": odds_info.get( "N/A"),
         "Open Odds": odds_info.get("Open Odds", "N/A"),
-        "Book Implied %": odds_info.get("Book Implied %", "N/A"),
+        "Book Implied %": odds_info.get( "N/A"),
         "EV Edge %": ev_edge,
         "Value Badge": val_badge,
-        "Steam": odds_info.get("Steam", "N/A"),
+        "Steam": odds_info.get( "N/A"),
+        "Bookmaker": odds_info.get( "N/A"),
+        "Odds Source": odds_info.get("Odds Source", "N/A"),
         "Bullpen Fatigue": bullpen_fatigue.get("Bullpen Fatigue", "Neutral"),
         "Bullpen Fatigue Edge": bullpen_fatigue.get("Bullpen Fatigue Edge", .50),
         "Hit %": round(hit_prob * 100, 1),
@@ -2144,9 +2333,9 @@ parlay_k = tier_parlays(k_df, "Best K%", "K", "Pitcher") if not k_df.empty else 
 # =========================
 # DISPLAY
 # =========================
-mobile_cols = ["Player","Team","Grade","Badge","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
+mobile_cols = ["Player","Team","Grade","Badge","HR %","Dinger Score","Auto Matchup Edge","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Season HR","Data Source"]
 full_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Lineup","Order","Dinger Score","Grade","Badge","HR %","Hit %","TB %","RBI %","Laser %","Form","Auto Matchup Edge","Pitcher Risk","Park Edge","Weather Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Laser","Season HR","Data Source"]
-breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Auto Matchup Edge","Season HR","Data Source","Reasons"]
+breakdown_cols = ["Player","Team","Matchup","Pitcher","Park","Game Weather","Weather Alert","Game Status","Parlay Eligible","Dinger Score","HR %","Auto Matchup Edge","Season HR","Data Source","Reasons"]
 
 def render(data, cols=None):
     if data is None or data.empty:
@@ -2511,7 +2700,7 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","Fair Odds","Book Odds","EV Edge %","Value Badge","Steam","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
 
 
         st.markdown("### 💰 Best Value HR Bets")
@@ -2519,9 +2708,9 @@ with tab4:
         if not value_board.empty:
             value_board["EV Edge Sort"] = value_board["EV Edge %"].apply(safe_float)
             value_board = value_board.sort_values("EV Edge Sort", ascending=False)
-            st.markdown(render(value_board.head(10), ["Player","Team","HR %","Fair Odds","Book Odds","Book Implied %","EV Edge %","Value Badge","Steam","Pitcher","Dinger Score","Grade"]), unsafe_allow_html=True)
+            st.markdown(render(value_board.head(10), ["Player","Team","HR %","Pitcher","Dinger Score","Grade"]), unsafe_allow_html=True)
         else:
-            st.markdown("<div class='note'>Upload sportsbook_hr_odds.csv to unlock EV/value betting board.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='note'>Dynamic HR rankings powered by matchup edge, weather, park factors, and power metrics.</div>", unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -2640,6 +2829,8 @@ with tab5:
 with tab6:
     st.write("Players scored:", len(df))
     st.write("Sportsbook odds loaded:", len(load_sportsbook_hr_odds()))
+    st.write("Auto odds source:", "The Odds API batter_home_runs" if ODDS_API_KEY else "CSV fallback / no API key")
+    st.write("Odds API key loaded:", bool(ODDS_API_KEY))
     st.write("Grade distribution:", df["Grade"].value_counts().to_dict() if "Grade" in df.columns else {})
     st.write("Dynamic parlay pool players:", len(parlay_pool))
     st.write("Pitchers scored:", len(k_df))
