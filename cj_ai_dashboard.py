@@ -1756,6 +1756,74 @@ for g in games:
                 r = score_row(b["_name"], normalize_team(g["home"]), matchup, g["away_p"], g["away_p_id"], g["park"], status, game_pk, batter_id=b.get("player_id", None))
                 if r: rows.append(r)
 
+
+# =========================
+# FULL INJECTION SAFETY PASS
+# =========================
+# Make sure today's matchup rows include every injected MLB hitter on each team,
+# not only confirmed lineups or CSV players. This prevents real HR leaders from
+# being missing from the Top 25 board.
+existing_row_keys = set()
+for rr in rows:
+    existing_row_keys.add((norm(rr.get("Player", "")), rr.get("Matchup", "")))
+
+for g in games:
+    matchup = f'{g["away"]} @ {g["home"]}'
+    status = g.get("status", "")
+    game_pk = g.get("gamePk")
+
+    away_team = normalize_team(g["away"])
+    home_team = normalize_team(g["home"])
+
+    if g["home_p"]:
+        away_pool = batters[batters["_team"] == away_team].copy()
+        for _, b in away_pool.iterrows():
+            pname = b["_name"]
+            key = (norm(pname), matchup)
+            if key in existing_row_keys:
+                continue
+
+            r = score_row(
+                pname,
+                away_team,
+                matchup,
+                g["home_p"],
+                g["home_p_id"],
+                g["park"],
+                status,
+                game_pk,
+                batter_id=b.get("player_id", None)
+            )
+            if r:
+                r["Lineup"] = "Projected/Injected"
+                rows.append(r)
+                existing_row_keys.add(key)
+
+    if g["away_p"]:
+        home_pool = batters[batters["_team"] == home_team].copy()
+        for _, b in home_pool.iterrows():
+            pname = b["_name"]
+            key = (norm(pname), matchup)
+            if key in existing_row_keys:
+                continue
+
+            r = score_row(
+                pname,
+                home_team,
+                matchup,
+                g["away_p"],
+                g["away_p_id"],
+                g["park"],
+                status,
+                game_pk,
+                batter_id=b.get("player_id", None)
+            )
+            if r:
+                r["Lineup"] = "Projected/Injected"
+                rows.append(r)
+                existing_row_keys.add(key)
+
+
 df = pd.DataFrame(rows)
 if df.empty:
     st.warning("No game rows created. Probable pitchers/lineups may not be posted yet.")
@@ -2754,7 +2822,7 @@ with tab0:
 
 with tab1:
     st.subheader("📱 Mobile-Friendly Best HR Plays")
-    st.caption(f"Active/upcoming games shown: {len(games)} | Dynamic parlay pool players: {len(parlay_pool)} | Auto refresh: 5 min")
+    st.caption(f"Active/upcoming games shown: {len(games)} | Full injected players scored: {len(df)} | Dynamic parlay pool players: {len(parlay_pool)} | Auto refresh: 5 min")
     st.markdown(render(df.head(40), mobile_cols), unsafe_allow_html=True)
 
 with tab2:
@@ -2768,7 +2836,7 @@ with tab3:
 with tab4:
     st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
 
-    st.markdown("<div class='note'>Top dinger targets are now ranked heavily by Power, Recent Form, Park, Weather, Matchup Edge, and Pitcher HR weakness.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Top dinger targets now rank from the full injected MLB player pool for today’s games, then weight Power, Recent Form, Park, Weather, Matchup Edge, and Pitcher HR weakness.</div>", unsafe_allow_html=True)
 
     st.markdown("### 📝 Top 25 Most Likely To Go Yard")
 
@@ -2967,6 +3035,7 @@ with tab5:
 
 with tab6:
     st.write("Players scored:", len(df))
+    st.write("Projected/Injected rows:", int((df["Lineup"].astype(str) == "Projected/Injected").sum()) if "Lineup" in df.columns else 0)
     st.write("Sportsbook odds loaded:", len(load_sportsbook_hr_odds()))
     st.write("Auto odds source:", "The Odds API batter_home_runs" if ODDS_API_KEY else "CSV fallback / no API key")
     st.write("Odds API key loaded:", bool(ODDS_API_KEY))
