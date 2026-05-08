@@ -3300,12 +3300,12 @@ def render_elite_6_parlays_like_model(portfolio):
     summary_rows = []
 
     short_strategy = {
-        "🏆 Best Overall": "Best Overall",
-        "🎯 Highest Probability": "Highest Prob",
-        "🔥 Weak Pitcher Attack": "Weak Pitcher",
-        "🌬️ Environment Boost": "Environment",
-        "⚡ Power + Weather": "Power + Wx",
-        "🧠 Sharp Read Combo": "Sharp Read",
+        "🏆 Best Overall": "Overall",
+        "🎯 Highest Probability": "Highest",
+        "🔥 Weak Pitcher Attack": "Weak P",
+        "🌬️ Environment Boost": "Env",
+        "⚡ Power + Weather": "P+W",
+        "🧠 Sharp Read Combo": "Sharp",
     }
 
     for item in portfolio:
@@ -3339,12 +3339,15 @@ def render_elite_6_parlays_like_model(portfolio):
 
     summary_df = pd.DataFrame(summary_rows)
     if not summary_df.empty:
+        summary_df["Conf"] = summary_df["Conf"].astype(str) + "/100"
+
         html += render(summary_df, [
-            "ID", "Strategy", "Conf",
-            "Leg 1", "L1 HR%", "L1 Grade",
-            "Leg 2", "L2 HR%", "L2 Grade",
-            "Leg 3", "L3 HR%", "L3 Grade",
-            "Avg HR"
+            "ID",
+            "Strategy",
+            "Conf",
+            "Leg 1",
+            "Leg 2",
+            "Leg 3"
         ])
 
     return html
