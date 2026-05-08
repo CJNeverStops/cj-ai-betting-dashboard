@@ -2943,97 +2943,77 @@ def render_generated_parlays_mobile(portfolio):
     if portfolio is None or len(portfolio) == 0:
         return "<div class='note'>No parlays generated.</div>"
 
-    html = """
-    <style>
-    .parlay-card{
-        background:linear-gradient(180deg,#071427,#091a33);
-        border:1px solid rgba(255,255,255,.10);
-        border-radius:18px;
-        padding:14px;
-        margin-bottom:18px;
-    }
-    .parlay-header{
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        gap:10px;
-        margin-bottom:10px;
-        font-weight:800;
-        font-size:18px;
-    }
-    .parlay-score{
-        background:#123d22;
-        color:#9cffb4;
-        padding:6px 12px;
-        border-radius:999px;
-        font-size:14px;
-        white-space:nowrap;
-    }
-    .parlay-player{
-        background:rgba(255,255,255,.04);
-        border-radius:14px;
-        padding:12px;
-        margin-top:10px;
-    }
-    .parlay-name{
-        font-size:18px;
-        font-weight:800;
-        color:#fff;
-    }
-    .parlay-sub{
-        opacity:.82;
-        font-size:13px;
-        margin-top:4px;
-    }
-    .parlay-metrics{
-        display:flex;
-        flex-wrap:wrap;
-        gap:8px;
-        margin-top:10px;
-    }
-    .metric-pill{
-        background:rgba(255,255,255,.08);
-        padding:6px 10px;
-        border-radius:999px;
-        font-size:12px;
-        font-weight:700;
-    }
-    </style>
-    """
+    summary_rows = []
+    detail_rows = []
 
     for item in portfolio:
         combo = item.get("Data", pd.DataFrame())
         if combo is None or combo.empty:
             continue
 
-        conf = safe_float(item.get("Combo Confidence", 0), 0)
-        html += f"""
-        <div class='parlay-card'>
-            <div class='parlay-header'>
-                <div>🏆 {item.get('Parlay_ID','')} - {item.get('Strategy','')}</div>
-                <div class='parlay-score'>{round(conf,1)}/100</div>
-            </div>
-        """
+        combo = combo.reset_index(drop=True)
 
-        for i, (_, r) in enumerate(combo.reset_index(drop=True).iterrows(), 1):
-            html += f"""
-            <div class='parlay-player'>
-                <div class='parlay-name'>#{i} {r.get('Player','')} — {r.get('Team','')}</div>
-                <div class='parlay-sub'>vs {r.get('Pitcher','')} • {r.get('Park','')} • {r.get('Game Weather','')}</div>
-                <div class='parlay-metrics'>
-                    <div class='metric-pill'>HR%: {r.get('HR %','')}</div>
-                    <div class='metric-pill'>Score: {r.get('Dinger Score','')}</div>
-                    <div class='metric-pill'>Grade: {r.get('Grade','')}</div>
-                    <div class='metric-pill'>Power: {r.get('Power','')}</div>
-                    <div class='metric-pill'>Pitcher Risk: {r.get('Pitcher Risk','')}</div>
-                    <div class='metric-pill'>Season HR: {r.get('Season HR','')}</div>
-                </div>
-            </div>
-            """
+        summary = {
+            "Parlay_ID": item.get("Parlay_ID", ""),
+            "Strategy": item.get("Strategy", ""),
+            "Combo Confidence": item.get("Combo Confidence", ""),
+            "Avg HR %": item.get("Avg HR %", ""),
+        }
 
-        html += "</div>"
+        for i in range(3):
+            if i < len(combo):
+                r = combo.iloc[i]
+                summary[f"Leg {i+1}"] = f"{r.get('Player','')} ({r.get('Team','')})"
+                summary[f"Leg {i+1} HR %"] = r.get("HR %", "")
+                summary[f"Leg {i+1} Grade"] = r.get("Grade", "")
+            else:
+                summary[f"Leg {i+1}"] = ""
+                summary[f"Leg {i+1} HR %"] = ""
+                summary[f"Leg {i+1} Grade"] = ""
+
+        summary_rows.append(summary)
+
+        for i, (_, r) in enumerate(combo.iterrows(), 1):
+            detail_rows.append({
+                "Parlay_ID": item.get("Parlay_ID", ""),
+                "Leg": i,
+                "Player": r.get("Player", ""),
+                "Team": r.get("Team", ""),
+                "HR %": r.get("HR %", ""),
+                "Dinger Score": r.get("Dinger Score", ""),
+                "Grade": r.get("Grade", ""),
+                "Pitcher": r.get("Pitcher", ""),
+                "Pitcher Risk": r.get("Pitcher Risk", ""),
+                "Park": r.get("Park", ""),
+                "Game Weather": r.get("Game Weather", ""),
+                "Power": r.get("Power", ""),
+                "Season HR": r.get("Season HR", ""),
+            })
+
+    html = "<div class='note'><b>🏆 10 Best 3-Leg HR Combos</b><br>Combo Confidence is scored 0–100. Higher means better overall parlay quality based on HR %, dinger score, power, matchup, pitcher weakness, park, weather, and diversification.</div>"
+
+    summary_df = pd.DataFrame(summary_rows)
+    if not summary_df.empty:
+        html += render(summary_df, [
+            "Parlay_ID","Strategy","Combo Confidence",
+            "Leg 1","Leg 1 HR %","Leg 1 Grade",
+            "Leg 2","Leg 2 HR %","Leg 2 Grade",
+            "Leg 3","Leg 3 HR %","Leg 3 Grade",
+            "Avg HR %"
+        ])
+
+    detail_df = pd.DataFrame(detail_rows)
+    if not detail_df.empty:
+        html += "<h3>🔎 Parlay Leg Details</h3>"
+        html += render(detail_df, [
+            "Parlay_ID","Leg","Player","Team","HR %","Dinger Score","Grade",
+            "Pitcher","Pitcher Risk","Park","Game Weather","Power","Season HR"
+        ])
 
     return html
+
+def render_generated_parlays(portfolio):
+    return render_generated_parlays_mobile(portfolio)
 
 
 def render_generated_parlays(portfolio):
