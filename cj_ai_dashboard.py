@@ -3319,7 +3319,6 @@ def render_elite_6_parlays_like_model(portfolio):
 
         row = {
             "ID": item.get("Parlay_ID", ""),
-            "Strategy": compact_strategy,
             "Conf": item.get("Combo Confidence", ""),
             "Avg HR": item.get("Avg HR %", ""),
         }
@@ -3343,7 +3342,6 @@ def render_elite_6_parlays_like_model(portfolio):
 
         html += render(summary_df, [
             "ID",
-            "Strategy",
             "Conf",
             "Leg 1",
             "Leg 2",
