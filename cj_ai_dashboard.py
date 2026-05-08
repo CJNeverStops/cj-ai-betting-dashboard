@@ -2546,21 +2546,14 @@ def pick_card(title, data):
 
 def top3_pick_cards(title, data):
     if data is None or data.empty:
-        return f"<div class='card'><h2>{title}</h2><p>No picks available.</p></div>"
+        return "<div class='note'>No picks available.</div>"
 
-    html = f"<div class='card'><h2>{title}</h2>"
-    for i, (_, r) in enumerate(data.head(3).iterrows(), 1):
-        html += f"""
-        <div style="border-top:1px solid rgba(255,255,255,.10); padding-top:10px; margin-top:10px;">
-            <h3>#{i} {r['Player']} — {r['Team']}</h3>
-            <p><b>HR %:</b> {r['HR %']}% | <b>Dinger Score:</b> {r['Dinger Score']} | <b>Grade:</b> {r['Grade']} {r['Badge']}</p>
-            <p><b>Matchup:</b> {r['Matchup']} vs {r['Pitcher']}</p>
-            <p><b>Park:</b> {r['Park']} | <b>Weather:</b> {r.get('Game Weather','')} | <b>Season HR:</b> {r.get('Season HR',0)}</p>
-        </div>
-        """
-    html += "</div>"
-    return html
-
+    cols = [
+        "Player","Team","HR %","Dinger Score","Grade","Badge",
+        "Pitcher","Park","Game Weather","Weather Alert",
+        "Auto Matchup Edge","Pitcher Risk","Season HR"
+    ]
+    return f"<h3>{title}</h3>" + render(data.head(3), cols)
 
 
 def render_dinger_board(data):
@@ -3176,39 +3169,6 @@ with tab4:
         ), unsafe_allow_html=True)
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
-
-    st.markdown("### 🎰 Clickable Smart 3-Leg HR Parlay Builder")
-
-    if "smart_builder_clicks" not in st.session_state:
-        st.session_state.smart_builder_clicks = 0
-
-    if st.button("Generate Smart 3-Leg HR Bet Combo"):
-        st.session_state.smart_builder_clicks += 1
-
-    builder_combo = clickable_smart_3_leg_builder(parlay_pool, st.session_state.smart_builder_clicks)
-
-    if len(builder_combo) == 3:
-        builder_conf = builder_combo_confidence(builder_combo)
-        logic = builder_combo["Builder Logic"].iloc[0] if "Builder Logic" in builder_combo.columns else "Smart Builder"
-
-        st.success(f"Smart 3-Leg HR Combo | Logic: {logic} | Model Combo Confidence: {builder_conf}%")
-
-        builder_cols = [
-            "Player","Team","Grade","Badge","HR %","Dinger Score","Builder Score",
-            "Pitcher","Pitcher Risk","Park","Game Weather","Weather Alert",
-            "Auto Matchup Edge","Power","Form Score","Season HR","Official HR Rank"
-        ]
-
-        advanced_cols = [
-            "Pitch Type Edge","Barrel Trend Edge","Expected HR Edge","Bat Speed Edge",
-            "Hand Split Edge","Bullpen HR Edge","Roof Status"
-        ]
-
-        builder_cols += [c for c in advanced_cols if c in builder_combo.columns]
-
-        st.markdown(render(builder_combo, builder_cols), unsafe_allow_html=True)
-    else:
-        st.warning("Not enough eligible players for a smart 3-leg HR combo.")
 
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
