@@ -2544,6 +2544,18 @@ def pick_card(title, data):
 
 
 
+
+def best_hr_pick_card(title, data):
+    if data is None or data.empty:
+        return "<div class='note'>No top HR pick available.</div>"
+    cols = [
+        "Player","Team","HR %","Dinger Score","Grade","Badge",
+        "Pitcher","Park","Game Weather","Weather Alert",
+        "Auto Matchup Edge","Pitcher Risk","Season HR"
+    ]
+    return f"<h3>{title}</h3>" + render(data.head(1), cols)
+
+
 def top3_pick_cards(title, data):
     if data is None or data.empty:
         return "<div class='note'>No picks available.</div>"
@@ -2964,10 +2976,8 @@ def render_generated_parlays(portfolio):
 
     html += render(summary_df, [
         "Parlay_ID","Strategy","Combo Confidence",
-        "Leg 1","Leg 1 HR %","Leg 1 Grade",
-        "Leg 2","Leg 2 HR %","Leg 2 Grade",
-        "Leg 3","Leg 3 HR %","Leg 3 Grade",
-        "Avg HR %","Avg Dinger Score"
+        "Leg 1","Leg 1 HR %","Leg 2","Leg 2 HR %","Leg 3","Leg 3 HR %",
+        "Avg HR %"
     ])
 
     # Full leg detail board underneath, same style as the rest of the model
@@ -2997,8 +3007,8 @@ def render_generated_parlays(portfolio):
     details_df = pd.DataFrame(detail_rows)
     html += "<h3>🔎 Generated Parlay Leg Details</h3>"
     html += render(details_df, [
-        "Parlay_ID","Leg","Player","Team","HR %","Dinger Score","Grade","Badge",
-        "Pitcher","Pitcher Risk","Park","Game Weather","Power","Season HR"
+        "Parlay_ID","Leg","Player","Team","HR %","Grade",
+        "Pitcher","Pitcher Risk","Park","Game Weather","Season HR"
     ])
 
     return html
@@ -3015,6 +3025,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mob
 
 with tab0:
     st.subheader("🏆 Top Picks of the Slate")
+    st.markdown(best_hr_pick_card("👑 Best HR Pick of the Slate", top_hr_pick), unsafe_allow_html=True)
     st.markdown(top3_pick_cards("💣 Top 3 HR Picks of the Slate", top3_hr_picks), unsafe_allow_html=True)
     st.markdown(top3_k_cards("🎯 Top 3 K Picks of the Slate", k_df), unsafe_allow_html=True)
 
@@ -3056,16 +3067,13 @@ with tab3:
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
 with tab4:
-    st.subheader("🧾 Generated Parlays + Daily Dinger List")
-
-    generated_portfolio = build_best_10_three_leg_hr_combos(parlay_pool, max_combos=10)
-    st.markdown(render_generated_parlays(generated_portfolio), unsafe_allow_html=True)
+    st.subheader("🧾 Daily Dinger List + Generated Parlays")
 
 
 
     st.markdown("<div class='note'>Top dinger targets combine true HR probability + same-day read factors: exact barrel CSV, handedness, pitch-type matchup, recent power, team totals, bullpen HR weakness, wind physics, home/away, and lineup protection.</div>", unsafe_allow_html=True)
 
-    st.markdown("### 📝 Top 25 Most Likely To Go Yard")
+    st.markdown("### 📝 Top 25 To Go Yard")
 
     dinger_list = parlay_pool.copy() if not parlay_pool.empty else df.copy()
 
@@ -3101,17 +3109,12 @@ with tab4:
 
         dinger_list["Brief Note"] = dinger_list.apply(dinger_note_row, axis=1)
 
-        st.markdown(render(dinger_list.head(25), ["Dinger Rank","Player","Team","Bet Badge","Badge","HR %","TRUE DINGER SCORE 100","Dinger Score","Grade","Season HR","Official HR Rank","HR Source","Game Weather","Weather Alert","Pitcher","Pitcher Risk","Auto Matchup Edge","Power","Pitch Type Edge","Barrel Trend Edge","Bat Speed Edge","Expected HR Edge","Hand Split Edge","Bullpen HR Edge","Roof Status","Roof Edge","Form Score","Park Edge","Weather Edge"]), unsafe_allow_html=True)
+        st.markdown(render(dinger_list.head(25), [
+            "Dinger Rank","Player","Team","Bet Badge","HR %","TRUE DINGER SCORE 100",
+            "Dinger Score","Grade","Pitcher","Pitcher Risk","Park","Game Weather",
+            "Weather Alert","Power","Season HR","Auto Matchup Edge"
+        ]), unsafe_allow_html=True)
 
-
-        st.markdown("### 💰 Best Value HR Bets")
-        value_board = dinger_list[dinger_list["EV Edge %"].astype(str) != "N/A"].copy()
-        if not value_board.empty:
-            value_board["EV Edge Sort"] = value_board["EV Edge %"].apply(safe_float)
-            value_board = value_board.sort_values("EV Edge Sort", ascending=False)
-            st.markdown(render(value_board.head(10), ["Player","Team","HR %","Pitcher","Dinger Score","Grade"]), unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='note'>Dynamic HR rankings powered by matchup edge, weather, park factors, and power metrics.</div>", unsafe_allow_html=True)
 
     st.markdown("### 🏆 Best 3-Leg HR Parlay by Tier")
 
@@ -3197,6 +3200,11 @@ with tab4:
         ), unsafe_allow_html=True)
     else:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
+
+    st.markdown('### 🏆 Generated 3-Leg HR Parlays')
+    generated_portfolio = build_best_10_three_leg_hr_combos(parlay_pool, max_combos=10)
+    st.markdown(render_generated_parlays(generated_portfolio), unsafe_allow_html=True)
+
 
     st.markdown("### ✅ Hit Parlays")
     st.markdown(render(parlay_hit), unsafe_allow_html=True)
