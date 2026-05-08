@@ -40,6 +40,15 @@ FAST_MODE = True
 MAX_REAL_STATCAST_PLAYERS = 20
 ADVANCED_ONLY_TOP25 = True
 
+STATCAST_READS_FILE = "statcast_reads.csv"
+HANDEDNESS_SPLITS_FILE = "handedness_splits.csv"
+PITCH_TYPE_MATCHUPS_FILE = "pitch_type_matchups.csv"
+PITCHER_PITCH_MIX_FILE = "pitcher_pitch_mix.csv"
+TEAM_TOTALS_FILE = "team_totals.csv"
+BULLPEN_FILE = "bullpen_hr_risk.csv"
+HOME_AWAY_SPLITS_FILE = "home_away_splits.csv"
+
+
 # SHARP BETTING UPGRADE:
 # Optional CSV support:
 # sportsbook_hr_odds.csv columns:
@@ -1837,6 +1846,145 @@ best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
 
 
+
+@st.cache_data(ttl=1800)
+def load_optional_csv(path):
+    try:
+        d = pd.read_csv(path)
+        if "Player" in d.columns:
+            d["_norm"] = d["Player"].astype(str).apply(norm)
+        if "Team" in d.columns:
+            d["_team_norm"] = d["Team"].astype(str).apply(normalize_team)
+        if "Pitcher" in d.columns:
+            d["_pitcher_norm"] = d["Pitcher"].astype(str).apply(norm)
+        return d
+    except Exception:
+        return pd.DataFrame()
+
+def csv_player_row(path, player_name):
+    d = load_optional_csv(path)
+    if d.empty or "_norm" not in d.columns:
+        return None
+    key = norm(player_name)
+    hit = d[d["_norm"] == key]
+    if hit.empty:
+        parts = key.split()
+        if len(parts) >= 2:
+            fi, last = parts[0][0], parts[-1]
+            hit = d[d["_norm"].apply(lambda x: len(str(x).split()) >= 2 and str(x).split()[-1] == last and str(x).split()[0][0] == fi)]
+    return hit.iloc[0] if not hit.empty else None
+
+def csv_team_row(path, team):
+    d = load_optional_csv(path)
+    if d.empty or "_team_norm" not in d.columns:
+        return None
+    hit = d[d["_team_norm"] == normalize_team(team)]
+    return hit.iloc[0] if not hit.empty else None
+
+def csv_pitcher_row(path, pitcher_name):
+    d = load_optional_csv(path)
+    if d.empty or "_pitcher_norm" not in d.columns:
+        return None
+    hit = d[d["_pitcher_norm"] == norm(pitcher_name)]
+    return hit.iloc[0] if not hit.empty else None
+
+def get_statcast_read_edge(player_name, base_power=.50):
+    r = csv_player_row(STATCAST_READS_FILE, player_name)
+    if r is not None:
+        barrel = safe_float(r.get("Barrel %", r.get("barrel_pct", 0)), 0)
+        hard = safe_float(r.get("HardHit %", r.get("hard_hit_pct", 0)), 0)
+        sweet = safe_float(r.get("SweetSpot %", r.get("sweet_spot_pct", 0)), 0)
+        ev = safe_float(r.get("Avg EV", r.get("avg_ev", 88)), 88)
+        la = safe_float(r.get("Launch Angle", r.get("launch_angle", 12)), 12)
+        pull_air = safe_float(r.get("Pull Air %", r.get("pull_air_pct", 0)), 0)
+        fb = safe_float(r.get("FB %", r.get("fb_pct", 0)), 0)
+        rb7 = safe_float(r.get("Recent Barrel 7", r.get("recent_barrel_7", barrel)), barrel)
+        rb14 = safe_float(r.get("Recent Barrel 14", r.get("recent_barrel_14", barrel)), barrel)
+        edge = (
+            clamp(barrel/20,0,1)*.24 + clamp(hard/60,0,1)*.17 +
+            clamp(sweet/45,0,1)*.10 + clamp((ev-86)/14,0,1)*.15 +
+            (1 if 12 <= la <= 28 else .45)*.10 + clamp(pull_air/45,0,1)*.09 +
+            clamp(fb/50,0,1)*.05 + clamp(rb7/20,0,1)*.06 + clamp(rb14/20,0,1)*.04
+        )
+        return round(clamp(edge,0,1),3), "statcast_reads.csv"
+    return round(clamp(base_power*.85+.08,0,1),3), "power proxy"
+
+def get_handedness_edge(player_name, pitcher_hand):
+    r = csv_player_row(HANDEDNESS_SPLITS_FILE, player_name)
+    if r is not None:
+        if str(pitcher_hand).upper() == "L":
+            iso, slg, hrr = safe_float(r.get("vsLHP_ISO",0)), safe_float(r.get("vsLHP_SLG",.4)), safe_float(r.get("vsLHP_HRRate",0))
+        else:
+            iso, slg, hrr = safe_float(r.get("vsRHP_ISO",0)), safe_float(r.get("vsRHP_SLG",.4)), safe_float(r.get("vsRHP_HRRate",0))
+        return round(clamp(scale01(iso,.08,.35)*.45 + scale01(slg,.32,.7)*.35 + scale01(hrr,.015,.09)*.20,0,1),3), "handedness_splits.csv"
+    return (.56 if str(pitcher_hand).upper()=="R" else .58), "fallback"
+
+def get_pitch_type_edge_csv(player_name, pitcher_name):
+    b = csv_player_row(PITCH_TYPE_MATCHUPS_FILE, player_name)
+    p = csv_pitcher_row(PITCHER_PITCH_MIX_FILE, pitcher_name)
+    if b is None or p is None:
+        return .50, "fallback"
+    cols = ["FF","SL","SI","CH","CU","FC","SW","ST"]
+    total = wt = 0
+    for c in cols:
+        u = safe_float(p.get(c,0),0)
+        v = safe_float(b.get(c,.5),.5)
+        if v > 2: v /= 100
+        total += u*v
+        wt += u
+    return (round(clamp(total/wt,0,1),3), "pitch CSV") if wt else (.50, "fallback")
+
+def get_team_total_edge(team):
+    r = csv_team_row(TEAM_TOTALS_FILE, team)
+    if r is not None:
+        runs = safe_float(r.get("Implied Runs", r.get("team_total", 4.2)),4.2)
+        return round(scale01(runs,3,6.5),3), runs, "team_totals.csv"
+    return .50, "N/A", "fallback"
+
+def get_bullpen_hr_edge(team):
+    r = csv_team_row(BULLPEN_FILE, team)
+    if r is not None:
+        risk = safe_float(r.get("Bullpen HR Risk",0),0)
+        hr9 = safe_float(r.get("Bullpen HR9",1.1),1.1)
+        fatigue = str(r.get("Bullpen Fatigue","Neutral"))
+        if risk <= 0: risk = scale01(hr9,.7,1.8)
+        return round(clamp(risk,0,1),3), fatigue, "bullpen_hr_risk.csv"
+    return .50, "Neutral", "fallback"
+
+def get_home_away_edge(player_name, is_home):
+    r = csv_player_row(HOME_AWAY_SPLITS_FILE, player_name)
+    if r is not None:
+        if is_home:
+            hrr, iso = safe_float(r.get("Home HRRate",0)), safe_float(r.get("Home ISO",0))
+        else:
+            hrr, iso = safe_float(r.get("Away HRRate",0)), safe_float(r.get("Away ISO",0))
+        return round(clamp(scale01(hrr,.01,.08)*.55 + scale01(iso,.08,.35)*.45,0,1),3), "home_away_splits.csv"
+    return .50, "fallback"
+
+def wind_direction_physics_edge(player_name, park, weather_alert, weather_text, team=None):
+    txt = f"{weather_alert} {weather_text}".lower()
+    edge = .50
+    if "out" in txt: edge += .18
+    if "to lf" in txt or "to rf" in txt or "to cf" in txt: edge += .08
+    if "gust" in txt: edge += .06
+    if "in" in txt and "wind" in txt: edge -= .12
+    if "vortex" in txt: edge -= .10
+    if "roof closed" in txt or "dome" in txt: edge -= .03
+    if "warm" in txt: edge += .06
+    if "cold" in txt or "snow" in txt: edge -= .15
+    if park in ["Yankee Stadium","Citizens Bank Park","Great American Ball Park","Coors Field"]:
+        edge += .06
+    return round(clamp(edge,0,1),3)
+
+def lineup_protection_edge(order, lineup):
+    if not isinstance(order, int): return .50
+    edge = 1 - scale01(order,1,9)
+    if order in [2,3,4]: edge += .10
+    if order in [1,5]: edge += .05
+    if str(lineup).lower() == "final": edge += .08
+    return round(clamp(edge,0,1),3)
+
+
 def weather_score_from_alert(weather_alert, weather_edge):
     alert = str(weather_alert).lower()
     edge = safe_float(weather_edge, .50)
@@ -1928,6 +2076,15 @@ def apply_advanced_edges_to_top25(base_df):
         xhr_data = expected_hr_data(player, row.get("Season HR", 0), batter_id)
         xhr_edge = expected_hr_score(xhr_data)
         split_edge = handedness_split_edge(player, "R", batter_id)
+        hand_csv_edge, hand_source = get_handedness_edge(player, "R")
+        pitch_csv_edge, pitch_source = get_pitch_type_edge_csv(player, row.get("Pitcher", ""))
+        statcast_read_edge, statcast_read_source = get_statcast_read_edge(player, row.get("Power", .50))
+        team_total_edge, implied_runs, team_total_source = get_team_total_edge(row.get("Team", ""))
+        bullpen_csv_edge, bullpen_fatigue, bullpen_source = get_bullpen_hr_edge(row.get("Team", ""))
+        is_home = str(row.get("Matchup", "")).split("@")[-1].strip().lower().startswith(str(row.get("Team","")).lower())
+        home_away_edge, home_away_source = get_home_away_edge(player, is_home)
+        wind_physics_edge = wind_direction_physics_edge(player, row.get("Park",""), row.get("Weather Alert",""), row.get("Game Weather",""), row.get("Team",""))
+        lineup_protect_edge = lineup_protection_edge(row.get("Order", "—"), row.get("Lineup", "Projected"))
 
         # Daily-environment enhanced re-score on original 0-42 scale.
         original_score = safe_float(row.get("Dinger Score", 0))
@@ -1938,7 +2095,14 @@ def apply_advanced_edges_to_top25(base_df):
             + (barrel_edge - .50) * 4.0
             + (bat_speed_edge - .50) * 2.0
             + (xhr_edge - .50) * 3.0
-            + (split_edge - .50) * 1.5
+            + (max(split_edge, hand_csv_edge) - .50) * 2.0
+            + (max(pitch_edge, pitch_csv_edge) - .50) * 2.5
+            + (statcast_read_edge - .50) * 5.0
+            + (team_total_edge - .50) * 2.5
+            + (bullpen_csv_edge - .50) * 2.5
+            + (home_away_edge - .50) * 1.5
+            + (wind_physics_edge - .50) * 4.0
+            + (lineup_protect_edge - .50) * 2.0
             + (env_edge - .50) * 4.5
         )
         new_score = round(clamp(original_score + boost, 0, 42), 1)
@@ -1947,7 +2111,17 @@ def apply_advanced_edges_to_top25(base_df):
         row["Barrel Trend Edge"] = round(barrel_edge, 3)
         row["Bat Speed Edge"] = round(bat_speed_edge, 3)
         row["Expected HR Edge"] = round(xhr_edge, 3)
-        row["Hand Split Edge"] = round(split_edge, 3)
+        row["Hand Split Edge"] = round(max(split_edge, hand_csv_edge), 3)
+        row["Statcast Read Edge"] = round(statcast_read_edge, 3)
+        row["Pitch CSV Edge"] = round(pitch_csv_edge, 3)
+        row["Team Total Edge"] = round(team_total_edge, 3)
+        row["Implied Runs"] = implied_runs
+        row["Bullpen HR Weakness"] = round(bullpen_csv_edge, 3)
+        row["Bullpen Fatigue"] = bullpen_fatigue
+        row["Wind Physics Edge"] = round(wind_physics_edge, 3)
+        row["Home/Away Edge"] = round(home_away_edge, 3)
+        row["Lineup Protection Edge"] = round(lineup_protect_edge, 3)
+        row["Read Sources"] = f"{statcast_read_source}; {hand_source}; {pitch_source}; {team_total_source}; {bullpen_source}; {home_away_source}"
         row["Today Environment Edge"] = round(env_edge, 3)
         row["Weather Score"] = weather_score_from_alert(row.get("Weather Alert", ""), row.get("Weather Edge", .50))
         row["Statcast Source"] = barrel_data.get("statcast_source", "fallback/top25")
@@ -1962,6 +2136,10 @@ def apply_advanced_edges_to_top25(base_df):
             + (barrel_edge - .50) * 3.0
             + (xhr_edge - .50) * 2.0
             + (env_edge - .50) * 2.5
+            + (statcast_read_edge - .50) * 2.8
+            + (team_total_edge - .50) * 1.4
+            + (wind_physics_edge - .50) * 2.0
+            + (lineup_protect_edge - .50) * 1.0
         )
         row["HR %"] = round(clamp(hrp + adv_adj, 1, 40), 1)
 
@@ -2891,7 +3069,7 @@ with tab3:
 with tab4:
     st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
 
-    st.markdown("<div class='note'>Top dinger targets now combine true HR probability with today environment: park, weather, wind boost, barrel trend, pitch matchup, handedness, power, form, and pitcher HR weakness.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='note'>Top dinger targets combine true HR probability + same-day read factors: exact barrel CSV, handedness, pitch-type matchup, recent power, team totals, bullpen HR weakness, wind physics, home/away, and lineup protection.</div>", unsafe_allow_html=True)
 
     st.markdown("### 📝 Top 25 Most Likely To Go Yard")
 
