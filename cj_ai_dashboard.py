@@ -1853,6 +1853,7 @@ df = df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Dinger Score", ascending=False).reset_index(drop=True)
 
 top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
+top3_hr_picks = parlay_pool.head(3) if not parlay_pool.empty else df.head(3)
 best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
 
@@ -2518,6 +2519,25 @@ def pick_card(title, data):
     """
 
 
+
+def top3_pick_cards(title, data):
+    if data is None or data.empty:
+        return f"<div class='card'><h2>{title}</h2><p>No picks available.</p></div>"
+
+    html = f"<div class='card'><h2>{title}</h2>"
+    for i, (_, r) in enumerate(data.head(3).iterrows(), 1):
+        html += f"""
+        <div style='border-top:1px solid rgba(255,255,255,.10); padding-top:10px; margin-top:10px;'>
+            <h3>#{i} {r['Player']} — {r['Team']}</h3>
+            <p><b>HR %:</b> {r['HR %']}% | <b>Dinger Score:</b> {r['Dinger Score']} | <b>Grade:</b> {r['Grade']} {r['Badge']}</p>
+            <p><b>Matchup:</b> {r['Matchup']} vs {r['Pitcher']}</p>
+            <p><b>Park:</b> {r['Park']} | <b>Weather:</b> {r.get('Game Weather','')} | <b>Season HR:</b> {r.get('Season HR',0)}</p>
+        </div>
+        """
+    html += "</div>"
+    return html
+
+
 def render_dinger_board(data):
     if data is None or data.empty:
         return "<div class='note'>No dinger targets available.</div>"
@@ -2700,11 +2720,238 @@ def render_target_cards(data):
     html += "</div>"
     return html
 
+
+def combo_confidence_100(combo_df):
+    if combo_df is None or combo_df.empty:
+        return 0
+
+    c = combo_df.copy()
+
+    daily = c.get("Daily Dinger Score", pd.Series([0] * len(c))).apply(safe_float).mean()
+    hrp = c["HR %"].apply(safe_float).mean()
+    dinger = c["Dinger Score"].apply(safe_float).mean()
+    power = c["Power"].apply(safe_float).mean() * 100
+    matchup = c["Auto Matchup Edge"].apply(safe_float).mean() * 100
+    pitcher = c["Pitcher Risk"].apply(safe_float).mean() * 100
+    park = c["Park Edge"].apply(safe_float).mean() * 100
+    weather = c["Weather Edge"].apply(safe_float).mean() * 100
+    season_hr = c["Season HR"].apply(safe_float).mean()
+
+    games = c["Matchup"].nunique()
+    diversity = 100 if games == 3 else 70 if games == 2 else 45
+    dinger100 = clamp((dinger / 42) * 100, 0, 100)
+
+    confidence = (
+        daily * 0.22
+        + hrp * 1.35 * 0.20
+        + dinger100 * 0.17
+        + power * 0.12
+        + matchup * 0.10
+        + pitcher * 0.08
+        + park * 0.05
+        + weather * 0.04
+        + clamp(season_hr / 20 * 100, 0, 100) * 0.04
+        + diversity * 0.08
+    )
+
+    return round(clamp(confidence, 0, 100), 1)
+
+def build_best_10_three_leg_hr_combos(pool, max_combos=10):
+    if pool is None or pool.empty:
+        return []
+
+    p = pool.copy()
+
+    if "Daily Dinger Score" not in p.columns:
+        p["Daily Dinger Score"] = (
+            p["HR %"].apply(safe_float) * 0.35
+            + p["Dinger Score"].apply(safe_float) * 0.25
+            + p["Power"].apply(safe_float) * 20 * 0.15
+            + p["Pitcher Risk"].apply(safe_float) * 20 * 0.10
+            + p["Park Edge"].apply(safe_float) * 20 * 0.07
+            + p["Weather Edge"].apply(safe_float) * 20 * 0.08
+        )
+
+    p["Leg Quality"] = (
+        p["Daily Dinger Score"].apply(safe_float) * 0.26
+        + p["HR %"].apply(safe_float) * 1.2 * 0.22
+        + (p["Dinger Score"].apply(safe_float) / 42 * 100) * 0.18
+        + p["Power"].apply(safe_float) * 100 * 0.12
+        + p["Auto Matchup Edge"].apply(safe_float) * 100 * 0.10
+        + p["Pitcher Risk"].apply(safe_float) * 100 * 0.06
+        + p["Park Edge"].apply(safe_float) * 100 * 0.03
+        + p["Weather Edge"].apply(safe_float) * 100 * 0.03
+    )
+
+    for col, wt in [
+        ("Statcast Read Edge", 4.0),
+        ("Pitch CSV Edge", 2.5),
+        ("Wind Physics Edge", 3.0),
+        ("Lineup Protection Edge", 2.0),
+        ("Team Total Edge", 2.0),
+        ("Bullpen HR Weakness", 2.0),
+    ]:
+        if col in p.columns:
+            p["Leg Quality"] += p[col].apply(safe_float) * wt
+
+    p = p.sort_values("Leg Quality", ascending=False).reset_index(drop=True)
+
+    combos = []
+    used_sets = set()
+
+    pools = [
+        ("Best Overall", p),
+        ("Highest Probability", p.sort_values(["HR %", "Leg Quality"], ascending=[False, False])),
+        ("Best Daily Dinger Score", p.sort_values(["Daily Dinger Score", "Leg Quality"], ascending=[False, False])),
+        ("Power + Weather", p.sort_values(["Power", "Weather Edge", "Park Edge", "Leg Quality"], ascending=[False, False, False, False])),
+        ("Weak Pitcher Attack", p.sort_values(["Pitcher Risk", "Auto Matchup Edge", "Leg Quality"], ascending=[False, False, False])),
+        ("Season HR Leaders", p.sort_values(["Season HR", "Leg Quality"], ascending=[False, False])),
+        ("Balanced Safe Combo", p.sort_values(["Leg Quality", "HR %", "Dinger Score"], ascending=[False, False, False])),
+        ("Environment Boost", p.sort_values(["Park Edge", "Weather Edge", "Leg Quality"], ascending=[False, False, False])),
+        ("Sharp Read Combo", p.sort_values(["Leg Quality"], ascending=False)),
+        ("Contrarian Strong", p[p["Grade"].isin(["A+", "A", "B"])].sort_values(["Leg Quality", "HR %"], ascending=[False, False]) if "Grade" in p.columns else p),
+    ]
+
+    def make_combo(source, offset=0, allow_same_game=False):
+        if source is None or source.empty:
+            return pd.DataFrame()
+
+        selected = []
+        used_players = set()
+        used_games = set()
+
+        source = source.reset_index(drop=True)
+        rotated = pd.concat([source.iloc[offset:], source.iloc[:offset]]).reset_index(drop=True)
+
+        for _, r in rotated.iterrows():
+            if len(selected) >= 3:
+                break
+            if r["Player"] in used_players:
+                continue
+            if not allow_same_game and r["Matchup"] in used_games:
+                continue
+
+            selected.append(r)
+            used_players.add(r["Player"])
+            used_games.add(r["Matchup"])
+
+        if len(selected) < 3:
+            for _, r in rotated.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+
+                selected.append(r)
+                used_players.add(r["Player"])
+
+        return pd.DataFrame(selected)
+
+    for pool_idx, (strategy, source) in enumerate(pools):
+        for offset in range(0, min(25, len(p))):
+            combo = make_combo(source, offset=offset + pool_idx, allow_same_game=False)
+
+            if len(combo) != 3:
+                continue
+
+            names = tuple(sorted(combo["Player"].astype(str).tolist()))
+            if names in used_sets:
+                continue
+
+            used_sets.add(names)
+            combos.append({
+                "Parlay_ID": f"P{len(combos)+1:03d}",
+                "Strategy": strategy,
+                "Combo Confidence": combo_confidence_100(combo),
+                "Avg HR %": round(combo["HR %"].apply(safe_float).mean(), 1),
+                "Avg Dinger Score": round(combo["Dinger Score"].apply(safe_float).mean(), 1),
+                "Players": " • ".join(combo["Player"].astype(str).tolist()),
+                "Data": combo
+            })
+            break
+
+        if len(combos) >= max_combos:
+            break
+
+    offset = 0
+    while len(combos) < max_combos and offset < min(75, len(p)):
+        combo = make_combo(p, offset=offset, allow_same_game=False)
+
+        if len(combo) == 3:
+            names = tuple(sorted(combo["Player"].astype(str).tolist()))
+            if names not in used_sets:
+                used_sets.add(names)
+                combos.append({
+                    "Parlay_ID": f"P{len(combos)+1:03d}",
+                    "Strategy": f"Smart Rotation {len(combos)+1}",
+                    "Combo Confidence": combo_confidence_100(combo),
+                    "Avg HR %": round(combo["HR %"].apply(safe_float).mean(), 1),
+                    "Avg Dinger Score": round(combo["Dinger Score"].apply(safe_float).mean(), 1),
+                    "Players": " • ".join(combo["Player"].astype(str).tolist()),
+                    "Data": combo
+                })
+
+        offset += 1
+
+    combos = sorted(combos, key=lambda x: x["Combo Confidence"], reverse=True)
+
+    for i, item in enumerate(combos[:max_combos], 1):
+        item["Parlay_ID"] = f"P{i:03d}"
+
+    return combos[:max_combos]
+
+def render_generated_parlays(portfolio):
+    if not portfolio:
+        return "<div class='note'>No generated parlays available.</div>"
+
+    html = ""
+    html += "<div class='parlay-hero'>🛡️ 10 Best 3-Leg HR Combos — diversified with 1 player per game when possible</div>"
+    html += "<div class='parlay-note'>💡 Combo Confidence is scored 0–100 like True Dinger Score. Higher = better overall parlay quality, not guaranteed hit rate.</div>"
+    html += "<h2>🏆 Generated Parlays</h2>"
+
+    for item in portfolio:
+        combo = item["Data"]
+        title = f"{item['Parlay_ID']} - {item['Strategy']} ({item['Combo Confidence']}/100)"
+
+        html += f"""
+        <details class='parlay-card'>
+            <summary class='parlay-title'>{title}</summary>
+            <div class='parlay-meta'>Avg HR: {item['Avg HR %']}% | Avg Dinger Score: {item['Avg Dinger Score']}</div>
+        """
+
+        for _, r in combo.iterrows():
+            html += f"""
+            <div class='parlay-leg'>
+                <b>{r['Player']}</b> — {r['Team']}<br>
+                <span class='parlay-green'>HR {r['HR %']}%</span> • Grade {r['Grade']} {r['Badge']} • vs {r['Pitcher']}<br>
+                <span class='parlay-yellow'>Why:</span> Power {r.get('Power','')} • Matchup {r.get('Auto Matchup Edge','')} • Pitcher Risk {r.get('Pitcher Risk','')} • Park {r.get('Park Edge','')} • Weather {r.get('Weather Edge','')}<br>
+                {r.get('Park','')} • {r.get('Game Weather','')}
+            </div>
+            """
+
+        html += "</details>"
+
+    rows = []
+    for item in portfolio:
+        rows.append({
+            "Parlay_ID": item["Parlay_ID"],
+            "Strategy": item["Strategy"],
+            "Combo Confidence": item["Combo Confidence"],
+            "Players": item["Players"],
+            "Avg HR %": item["Avg HR %"],
+            "Avg Dinger Score": item["Avg Dinger Score"],
+        })
+
+    summary_df = pd.DataFrame(rows)
+    html += render(summary_df, ["Parlay_ID","Strategy","Combo Confidence","Players","Avg HR %","Avg Dinger Score"])
+    return html
+
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
     st.subheader("🏆 Top Picks of the Slate")
-    st.markdown(pick_card("💣 Top HR Pick of the Slate", top_hr_pick), unsafe_allow_html=True)
+    st.markdown(top3_pick_cards("💣 Top 3 HR Picks of the Slate", top3_hr_picks), unsafe_allow_html=True)
 
     best_k_pitcher = k_df.head(1) if not k_df.empty else pd.DataFrame()
     if not best_k_pitcher.empty:
