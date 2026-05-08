@@ -31,6 +31,22 @@ def get_pybaseball_module():
 
 st.set_page_config(page_title="AON WORLD BETS HR MODEL ⚾️💣", layout="wide")
 
+st.markdown("""
+<style>
+/* make strategy column compact like Leg 1 */
+td:nth-child(2), th:nth-child(2) {
+    max-width: 90px !important;
+    width: 90px !important;
+    min-width: 90px !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 REFRESH_SECONDS = 300
 
 # FAST MODE:
@@ -3300,12 +3316,12 @@ def render_elite_6_parlays_like_model(portfolio):
     summary_rows = []
 
     short_strategy = {
-        "🏆 Best Overall": "OVR",
-        "🎯 Highest Probability": "HP",
-        "🔥 Weak Pitcher Attack": "WP",
-        "🌬️ Environment Boost": "ENV",
-        "⚡ Power + Weather": "P+W",
-        "🧠 Sharp Read Combo": "SR",
+        "🏆 Best Overall": "Best Overall",
+        "🎯 Highest Probability": "Highest Probability",
+        "🔥 Weak Pitcher Attack": "Weak Pitcher",
+        "🌬️ Environment Boost": "Environment",
+        "⚡ Power + Weather": "Power + Weather",
+        "🧠 Sharp Read Combo": "Sharp Read",
     }
 
     for item in portfolio:
