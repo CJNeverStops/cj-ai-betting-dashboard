@@ -3123,13 +3123,6 @@ with tab0:
     st.markdown(top3_pick_cards("💣 Top 3 HR Picks of the Slate", top3_hr_picks), unsafe_allow_html=True)
     st.markdown(top3_k_cards("🎯 Top 3 K Picks of the Slate", k_df), unsafe_allow_html=True)
 
-    best_k_pitcher = k_df.head(1) if not k_df.empty else pd.DataFrame()
-    if not best_k_pitcher.empty:
-        k = best_k_pitcher.iloc[0]
-        st.markdown(f"""
-        <div class='card'>
-    else:
-
     st.markdown("### ✅ Best 10 Players for Hits")
     best_hits_10 = parlay_pool.sort_values("Hit %", ascending=False).head(10) if not parlay_pool.empty else df.sort_values("Hit %", ascending=False).head(10)
     st.markdown(render(best_hits_10, ["Player","Team","Hit %","Grade","Pitcher","Park","Game Status","Lineup","Order","Season HR","Data Source"]), unsafe_allow_html=True)
@@ -3315,9 +3308,6 @@ with tab5:
 with tab6:
     st.write("Players scored:", len(df))
     st.write("Projected/Injected rows:", int((df["Lineup"].astype(str) == "Projected/Injected").sum()) if "Lineup" in df.columns else 0)
-    st.write("Sportsbook odds loaded:", len(load_sportsbook_hr_odds()))
-    st.write("Auto odds source:", "The Odds API batter_home_runs" if ODDS_API_KEY else "CSV fallback / no API key")
-    st.write("Odds API key loaded:", bool(ODDS_API_KEY))
     st.write("Grade distribution:", df["Grade"].value_counts().to_dict() if "Grade" in df.columns else {})
     st.write("Dynamic parlay pool players:", len(parlay_pool))
     st.write("Pitchers scored:", len(k_df))
