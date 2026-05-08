@@ -3300,12 +3300,12 @@ def render_elite_6_parlays_like_model(portfolio):
     summary_rows = []
 
     short_strategy = {
-        "🏆 Best Overall": "Overall",
-        "🎯 Highest Probability": "Highest",
-        "🔥 Weak Pitcher Attack": "Weak P",
-        "🌬️ Environment Boost": "Env",
+        "🏆 Best Overall": "OVR",
+        "🎯 Highest Probability": "HP",
+        "🔥 Weak Pitcher Attack": "WP",
+        "🌬️ Environment Boost": "ENV",
         "⚡ Power + Weather": "P+W",
-        "🧠 Sharp Read Combo": "Sharp",
+        "🧠 Sharp Read Combo": "SR",
     }
 
     for item in portfolio:
@@ -3319,6 +3319,7 @@ def render_elite_6_parlays_like_model(portfolio):
 
         row = {
             "ID": item.get("Parlay_ID", ""),
+            "Strategy": compact_strategy,
             "Conf": item.get("Combo Confidence", ""),
             "Avg HR": item.get("Avg HR %", ""),
         }
@@ -3342,6 +3343,7 @@ def render_elite_6_parlays_like_model(portfolio):
 
         html += render(summary_df, [
             "ID",
+            "Strategy",
             "Conf",
             "Leg 1",
             "Leg 2",
