@@ -2555,7 +2555,6 @@ def top3_pick_cards(title, data):
     ]
     return f"<h3>{title}</h3>" + render(data.head(3), cols)
 
-
 def render_dinger_board(data):
     if data is None or data.empty:
         return "<div class='note'>No dinger targets available.</div>"
@@ -2932,63 +2931,92 @@ def render_generated_parlays(portfolio):
         return "<div class='note'>No generated parlays available.</div>"
 
     html = ""
-    html += "<div class='parlay-hero'>🛡️ 10 Best 3-Leg HR Combos — diversified with 1 player per game when possible</div>"
-    html += "<div class='parlay-note'>💡 Combo Confidence is scored 0–100 like True Dinger Score. Higher = better overall parlay quality, not guaranteed hit rate.</div>"
-    html += "<h2>🏆 Generated Parlays</h2>"
-    html += "<div class='generated-parlay-wrap'>"
-
-    for item in portfolio:
-        combo = item["Data"]
-        title = f"{item['Parlay_ID']} - {item['Strategy']}"
-        html += f"""
-        <details class='generated-parlay-card'>
-            <summary class='generated-parlay-summary'>{title} <span class='combo-pill'>{item['Combo Confidence']}/100</span></summary>
-        """
-
-        for leg_num, (_, r) in enumerate(combo.iterrows(), 1):
-            alert = r.get("Weather Alert", "")
-            wcls, wlabel = parlay_weather_badge(alert)
-            power = round(safe_float(r.get("Power", 0)) * 100)
-            season_hr = r.get("Season HR", 0)
-
-            html += f"""
-            <div class='parlay-player-row'>
-                <div class='parlay-player-rank'>{leg_num}</div>
-                <div>
-                    <div class='parlay-player-name'>{r['Player']} <span class='target-pill {grade_target_class(r.get('Grade',''))}'>{r.get('Grade','')}</span></div>
-                    <div class='parlay-player-sub'>{r['Team']} • {r.get('Badge','')} • vs {r.get('Pitcher','')}</div>
-                </div>
-                <div class='parlay-player-num'>{r.get('HR %','')}%<span class='parlay-player-label'>MODEL</span></div>
-                <div class='parlay-player-num'>{season_hr}<span class='parlay-player-label'>HR</span></div>
-                <div class='parlay-player-num'>{power}<span class='parlay-player-label'>PWR</span></div>
-                <div class='{wcls}'>{wlabel}<br>{r.get('Game Weather','')}</div>
-            </div>
-            """
-
-        html += "</details>"
-
-    html += "</div>"
+    html += "<div class='note'><b>🏆 10 Best 3-Leg HR Combos</b><br>Combo Confidence is scored 0–100. Higher means better overall parlay quality based on HR %, Daily Dinger Score, power, matchup, pitcher weakness, park, weather, and diversification.</div>"
 
     rows = []
     for item in portfolio:
-        rows.append({
+        combo = item["Data"].reset_index(drop=True)
+
+        row = {
             "Parlay_ID": item["Parlay_ID"],
             "Strategy": item["Strategy"],
             "Combo Confidence": item["Combo Confidence"],
-            "Players": item["Players"],
             "Avg HR %": item["Avg HR %"],
             "Avg Dinger Score": item["Avg Dinger Score"],
-        })
+        }
+
+        for i in range(3):
+            if i < len(combo):
+                r = combo.iloc[i]
+                row[f"Leg {i+1}"] = f"{r['Player']} ({r['Team']})"
+                row[f"Leg {i+1} HR %"] = r.get("HR %", "")
+                row[f"Leg {i+1} Grade"] = r.get("Grade", "")
+                row[f"Leg {i+1} Pitcher"] = r.get("Pitcher", "")
+            else:
+                row[f"Leg {i+1}"] = ""
+                row[f"Leg {i+1} HR %"] = ""
+                row[f"Leg {i+1} Grade"] = ""
+                row[f"Leg {i+1} Pitcher"] = ""
+
+        rows.append(row)
 
     summary_df = pd.DataFrame(rows)
-    html += render(summary_df, ["Parlay_ID","Strategy","Combo Confidence","Players","Avg HR %","Avg Dinger Score"])
+
+    html += render(summary_df, [
+        "Parlay_ID","Strategy","Combo Confidence",
+        "Leg 1","Leg 1 HR %","Leg 1 Grade",
+        "Leg 2","Leg 2 HR %","Leg 2 Grade",
+        "Leg 3","Leg 3 HR %","Leg 3 Grade",
+        "Avg HR %","Avg Dinger Score"
+    ])
+
+    # Full leg detail board underneath, same style as the rest of the model
+    detail_rows = []
+    for item in portfolio:
+        combo = item["Data"].reset_index(drop=True)
+        for i, (_, r) in enumerate(combo.iterrows(), 1):
+            detail_rows.append({
+                "Parlay_ID": item["Parlay_ID"],
+                "Leg": i,
+                "Strategy": item["Strategy"],
+                "Combo Confidence": item["Combo Confidence"],
+                "Player": r.get("Player", ""),
+                "Team": r.get("Team", ""),
+                "HR %": r.get("HR %", ""),
+                "Dinger Score": r.get("Dinger Score", ""),
+                "Grade": r.get("Grade", ""),
+                "Badge": r.get("Badge", ""),
+                "Pitcher": r.get("Pitcher", ""),
+                "Pitcher Risk": r.get("Pitcher Risk", ""),
+                "Park": r.get("Park", ""),
+                "Game Weather": r.get("Game Weather", ""),
+                "Power": r.get("Power", ""),
+                "Season HR": r.get("Season HR", ""),
+            })
+
+    details_df = pd.DataFrame(detail_rows)
+    html += "<h3>🔎 Generated Parlay Leg Details</h3>"
+    html += render(details_df, [
+        "Parlay_ID","Leg","Player","Team","HR %","Dinger Score","Grade","Badge",
+        "Pitcher","Pitcher Risk","Park","Game Weather","Power","Season HR"
+    ])
+
     return html
+
+def top3_k_cards(title, data):
+    if data is None or data.empty:
+        return "<div class='note'>No K picks available.</div>"
+
+    cols = ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]
+    return f"<h3>{title}</h3>" + render(data.head(3), cols)
+
 
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
     st.subheader("🏆 Top Picks of the Slate")
     st.markdown(top3_pick_cards("💣 Top 3 HR Picks of the Slate", top3_hr_picks), unsafe_allow_html=True)
+    st.markdown(top3_k_cards("🎯 Top 3 K Picks of the Slate", k_df), unsafe_allow_html=True)
 
     best_k_pitcher = k_df.head(1) if not k_df.empty else pd.DataFrame()
     if not best_k_pitcher.empty:
@@ -3028,7 +3056,7 @@ with tab3:
     st.markdown(render(k_df, ["Pitcher","Opponent","Projected Ks","Best K%","Grade","K/9","ERA","WHIP"]), unsafe_allow_html=True)
 
 with tab4:
-    st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
+    st.subheader("🧾 Generated Parlays + Daily Dinger List")
 
     generated_portfolio = build_best_10_three_leg_hr_combos(parlay_pool, max_combos=10)
     st.markdown(render_generated_parlays(generated_portfolio), unsafe_allow_html=True)
