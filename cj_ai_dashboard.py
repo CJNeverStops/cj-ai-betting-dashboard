@@ -3286,6 +3286,95 @@ def render_elite_6_mobile_parlays(portfolio):
     return html
 
 
+
+def render_elite_6_parlays_like_model(portfolio):
+    """
+    Renders generated parlays using the same table style as the rest of the model.
+    No HTML cards, no raw div output.
+    """
+    if portfolio is None or len(portfolio) == 0:
+        return "<div class='note'>No parlays generated.</div>"
+
+    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Combo Confidence is scored 0–100.</div>"
+
+    # Compact combo summary
+    summary_rows = []
+    detail_rows = []
+
+    for item in portfolio:
+        combo = item.get("Data", pd.DataFrame())
+        if combo is None or combo.empty:
+            continue
+
+        combo = combo.reset_index(drop=True)
+
+        row = {
+            "Parlay_ID": item.get("Parlay_ID", ""),
+            "Strategy": item.get("Strategy", ""),
+            "Combo Confidence": item.get("Combo Confidence", ""),
+            "Avg HR %": item.get("Avg HR %", ""),
+            "Avg Dinger Score": item.get("Avg Dinger Score", ""),
+        }
+
+        for i in range(3):
+            if i < len(combo):
+                r = combo.iloc[i]
+                row[f"Leg {i+1}"] = f"{r.get('Player','')} ({r.get('Team','')})"
+                row[f"Leg {i+1} HR %"] = r.get("HR %", "")
+                row[f"Leg {i+1} Grade"] = r.get("Grade", "")
+            else:
+                row[f"Leg {i+1}"] = ""
+                row[f"Leg {i+1} HR %"] = ""
+                row[f"Leg {i+1} Grade"] = ""
+
+        summary_rows.append(row)
+
+        for i, (_, r) in enumerate(combo.iterrows(), 1):
+            detail_rows.append({
+                "Parlay_ID": item.get("Parlay_ID", ""),
+                "Leg": i,
+                "Strategy": item.get("Strategy", ""),
+                "Combo Confidence": item.get("Combo Confidence", ""),
+                "Player": r.get("Player", ""),
+                "Team": r.get("Team", ""),
+                "Grade": r.get("Grade", ""),
+                "Badge": r.get("Badge", ""),
+                "HR %": r.get("HR %", ""),
+                "Dinger Score": r.get("Dinger Score", ""),
+                "Pitcher": r.get("Pitcher", ""),
+                "Pitcher Risk": r.get("Pitcher Risk", ""),
+                "Park": r.get("Park", ""),
+                "Game Weather": r.get("Game Weather", ""),
+                "Weather Alert": r.get("Weather Alert", ""),
+                "Power": r.get("Power", ""),
+                "Season HR": r.get("Season HR", ""),
+                "Auto Matchup Edge": r.get("Auto Matchup Edge", ""),
+            })
+
+    summary_df = pd.DataFrame(summary_rows)
+    if not summary_df.empty:
+        html += "<h3>📌 Combo Summary</h3>"
+        html += render(summary_df, [
+            "Parlay_ID", "Strategy", "Combo Confidence",
+            "Leg 1", "Leg 1 HR %", "Leg 1 Grade",
+            "Leg 2", "Leg 2 HR %", "Leg 2 Grade",
+            "Leg 3", "Leg 3 HR %", "Leg 3 Grade",
+            "Avg HR %"
+        ])
+
+    detail_df = pd.DataFrame(detail_rows)
+    if not detail_df.empty:
+        html += "<h3>🔎 Combo Player Details</h3>"
+        html += render(detail_df, [
+            "Parlay_ID", "Leg", "Strategy", "Combo Confidence",
+            "Player", "Team", "Grade", "Badge", "HR %", "Dinger Score",
+            "Pitcher", "Pitcher Risk", "Park", "Game Weather",
+            "Weather Alert", "Power", "Season HR", "Auto Matchup Edge"
+        ])
+
+    return html
+
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
@@ -3454,7 +3543,7 @@ with tab4:
 
     st.markdown('### 🏆 Generated 3-Leg HR Parlays')
     generated_portfolio = build_elite_6_three_leg_hr_combos(parlay_pool)
-    st.markdown(render_elite_6_mobile_parlays(generated_portfolio), unsafe_allow_html=True)
+    st.markdown(render_elite_6_parlays_like_model(generated_portfolio), unsafe_allow_html=True)
 
 
     st.markdown("### ✅ Hit Parlays")
