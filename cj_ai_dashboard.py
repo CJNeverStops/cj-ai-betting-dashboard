@@ -194,6 +194,30 @@ st.markdown("""
 .parlay-green { color:#86efac; font-weight:900; }
 .parlay-yellow { color:#fde68a; font-weight:900; }
 
+
+.generated-parlay-wrap { display:flex; flex-direction:column; gap:12px; margin:10px 0 22px; }
+.generated-parlay-card { background:#0b1220; border:1px solid #334155; border-radius:18px; padding:12px; }
+.generated-parlay-summary { cursor:pointer; font-size:18px; font-weight:900; color:#f8fafc; padding:6px 2px; }
+.combo-pill { display:inline-block; background:rgba(34,197,94,.20); color:#86efac; border:1px solid rgba(34,197,94,.35); padding:3px 8px; border-radius:999px; font-size:12px; font-weight:900; margin-left:6px; }
+.parlay-player-row { display:grid; grid-template-columns:32px 1.4fr 64px 56px 60px 72px; gap:6px; align-items:center; background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.07); border-radius:12px; padding:9px 7px; margin:7px 0; }
+.parlay-player-rank { color:#fde68a; font-weight:900; text-align:center; }
+.parlay-player-name { color:#f8fafc; font-size:13px; font-weight:900; line-height:1.1; }
+.parlay-player-sub { color:#cbd5e1; font-size:9px; text-transform:uppercase; letter-spacing:.04em; margin-top:3px; }
+.parlay-player-num { text-align:right; color:#22c55e; font-size:13px; font-weight:900; }
+.parlay-player-label { display:block; color:#94a3b8; font-size:8px; font-weight:800; margin-top:2px; }
+.parlay-player-small { text-align:right; font-size:10px; color:#cbd5e1; line-height:1.15; }
+.parlay-weather-good { background:rgba(34,197,94,.20); color:#86efac; border-radius:8px; padding:4px; text-align:center; font-weight:900; font-size:9px; }
+.parlay-weather-mid { background:rgba(234,179,8,.20); color:#fde68a; border-radius:8px; padding:4px; text-align:center; font-weight:900; font-size:9px; }
+.parlay-weather-bad { background:rgba(239,68,68,.20); color:#fca5a5; border-radius:8px; padding:4px; text-align:center; font-weight:900; font-size:9px; }
+@media (max-width:700px) {
+  .generated-parlay-summary { font-size:15px; }
+  .parlay-player-row { grid-template-columns:24px 1.45fr 48px 38px 42px 55px; gap:4px; padding:8px 5px; }
+  .parlay-player-name { font-size:11px; }
+  .parlay-player-sub { font-size:8px; }
+  .parlay-player-num { font-size:11px; }
+  .parlay-player-small,.parlay-weather-good,.parlay-weather-mid,.parlay-weather-bad { font-size:8px; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -2527,7 +2551,7 @@ def top3_pick_cards(title, data):
     html = f"<div class='card'><h2>{title}</h2>"
     for i, (_, r) in enumerate(data.head(3).iterrows(), 1):
         html += f"""
-        <div style='border-top:1px solid rgba(255,255,255,.10); padding-top:10px; margin-top:10px;'>
+        <div style="border-top:1px solid rgba(255,255,255,.10); padding-top:10px; margin-top:10px;">
             <h3>#{i} {r['Player']} — {r['Team']}</h3>
             <p><b>HR %:</b> {r['HR %']}% | <b>Dinger Score:</b> {r['Dinger Score']} | <b>Grade:</b> {r['Grade']} {r['Badge']}</p>
             <p><b>Matchup:</b> {r['Matchup']} vs {r['Pitcher']}</p>
@@ -2536,6 +2560,7 @@ def top3_pick_cards(title, data):
         """
     html += "</div>"
     return html
+
 
 
 def render_dinger_board(data):
@@ -2900,6 +2925,15 @@ def build_best_10_three_leg_hr_combos(pool, max_combos=10):
 
     return combos[:max_combos]
 
+
+def parlay_weather_badge(alert):
+    val = str(alert).lower()
+    if "warm" in val or "boost" in val or "wind" in val:
+        return "parlay-weather-good", "GOOD"
+    if "cold" in val or "downgrade" in val:
+        return "parlay-weather-bad", "BAD"
+    return "parlay-weather-mid", "NEUTRAL"
+
 def render_generated_parlays(portfolio):
     if not portfolio:
         return "<div class='note'>No generated parlays available.</div>"
@@ -2908,28 +2942,39 @@ def render_generated_parlays(portfolio):
     html += "<div class='parlay-hero'>🛡️ 10 Best 3-Leg HR Combos — diversified with 1 player per game when possible</div>"
     html += "<div class='parlay-note'>💡 Combo Confidence is scored 0–100 like True Dinger Score. Higher = better overall parlay quality, not guaranteed hit rate.</div>"
     html += "<h2>🏆 Generated Parlays</h2>"
+    html += "<div class='generated-parlay-wrap'>"
 
     for item in portfolio:
         combo = item["Data"]
-        title = f"{item['Parlay_ID']} - {item['Strategy']} ({item['Combo Confidence']}/100)"
-
+        title = f"{item['Parlay_ID']} - {item['Strategy']}"
         html += f"""
-        <details class='parlay-card'>
-            <summary class='parlay-title'>{title}</summary>
-            <div class='parlay-meta'>Avg HR: {item['Avg HR %']}% | Avg Dinger Score: {item['Avg Dinger Score']}</div>
+        <details class='generated-parlay-card'>
+            <summary class='generated-parlay-summary'>{title} <span class='combo-pill'>{item['Combo Confidence']}/100</span></summary>
         """
 
-        for _, r in combo.iterrows():
+        for leg_num, (_, r) in enumerate(combo.iterrows(), 1):
+            alert = r.get("Weather Alert", "")
+            wcls, wlabel = parlay_weather_badge(alert)
+            power = round(safe_float(r.get("Power", 0)) * 100)
+            season_hr = r.get("Season HR", 0)
+
             html += f"""
-            <div class='parlay-leg'>
-                <b>{r['Player']}</b> — {r['Team']}<br>
-                <span class='parlay-green'>HR {r['HR %']}%</span> • Grade {r['Grade']} {r['Badge']} • vs {r['Pitcher']}<br>
-                <span class='parlay-yellow'>Why:</span> Power {r.get('Power','')} • Matchup {r.get('Auto Matchup Edge','')} • Pitcher Risk {r.get('Pitcher Risk','')} • Park {r.get('Park Edge','')} • Weather {r.get('Weather Edge','')}<br>
-                {r.get('Park','')} • {r.get('Game Weather','')}
+            <div class='parlay-player-row'>
+                <div class='parlay-player-rank'>{leg_num}</div>
+                <div>
+                    <div class='parlay-player-name'>{r['Player']} <span class='target-pill {grade_target_class(r.get('Grade',''))}'>{r.get('Grade','')}</span></div>
+                    <div class='parlay-player-sub'>{r['Team']} • {r.get('Badge','')} • vs {r.get('Pitcher','')}</div>
+                </div>
+                <div class='parlay-player-num'>{r.get('HR %','')}%<span class='parlay-player-label'>MODEL</span></div>
+                <div class='parlay-player-num'>{season_hr}<span class='parlay-player-label'>HR</span></div>
+                <div class='parlay-player-num'>{power}<span class='parlay-player-label'>PWR</span></div>
+                <div class='{wcls}'>{wlabel}<br>{r.get('Game Weather','')}</div>
             </div>
             """
 
         html += "</details>"
+
+    html += "</div>"
 
     rows = []
     for item in portfolio:
@@ -2945,7 +2990,6 @@ def render_generated_parlays(portfolio):
     summary_df = pd.DataFrame(rows)
     html += render(summary_df, ["Parlay_ID","Strategy","Combo Confidence","Players","Avg HR %","Avg Dinger Score"])
     return html
-
 
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
