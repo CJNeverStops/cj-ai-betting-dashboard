@@ -218,6 +218,27 @@ st.markdown("""
   .parlay-player-small,.parlay-weather-good,.parlay-weather-mid,.parlay-weather-bad { font-size:8px; }
 }
 
+
+/* ELITE MOBILE PARLAYS */
+.parlay-wrap{display:flex;flex-direction:column;gap:10px;margin-top:10px;}
+.parlay-card-mobile{background:#0b1220;border:1px solid #1f2937;border-radius:16px;padding:10px;margin-bottom:10px;}
+.parlay-header-mobile{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
+.parlay-title-mobile{font-size:14px;font-weight:900;color:white;line-height:1.15;}
+.parlay-score-mobile{background:#16a34a;color:white;font-size:12px;font-weight:900;padding:4px 8px;border-radius:999px;white-space:nowrap;}
+.parlay-player-mobile{background:#111827;border-radius:12px;padding:8px;margin-top:7px;}
+.parlay-name-mobile{font-size:13px;font-weight:900;color:#f8fafc;line-height:1.1;}
+.parlay-sub-mobile{font-size:9px;color:#94a3b8;margin-top:2px;line-height:1.2;}
+.parlay-metrics-mobile{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.metric-pill-mobile{background:#1e293b;color:#e2e8f0;font-size:9px;padding:3px 6px;border-radius:999px;font-weight:800;}
+@media (max-width:700px){
+.parlay-card-mobile{padding:8px;}
+.parlay-title-mobile{font-size:12px;}
+.parlay-score-mobile{font-size:10px;padding:3px 6px;}
+.parlay-name-mobile{font-size:11px;}
+.parlay-sub-mobile{font-size:8px;}
+.metric-pill-mobile{font-size:8px;padding:2px 5px;}
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3095,6 +3116,176 @@ def top3_k_cards(title, data):
     return f"<h3>{title}</h3>" + render(data.head(3), cols)
 
 
+
+def elite_combo_confidence_100(combo_df):
+    if combo_df is None or combo_df.empty:
+        return 0
+    c = combo_df.copy()
+    daily = c.get("Daily Dinger Score", pd.Series([0] * len(c))).apply(safe_float).mean()
+    hrp = c["HR %"].apply(safe_float).mean()
+    dinger = c["Dinger Score"].apply(safe_float).mean()
+    power = c["Power"].apply(safe_float).mean() * 100
+    matchup = c["Auto Matchup Edge"].apply(safe_float).mean() * 100
+    pitcher = c["Pitcher Risk"].apply(safe_float).mean() * 100
+    park = c["Park Edge"].apply(safe_float).mean() * 100
+    weather = c["Weather Edge"].apply(safe_float).mean() * 100
+    season_hr = c["Season HR"].apply(safe_float).mean() if "Season HR" in c.columns else 0
+    games = c["Matchup"].nunique() if "Matchup" in c.columns else 1
+    diversity = 100 if games == 3 else 70 if games == 2 else 45
+    dinger100 = clamp((dinger / 42) * 100, 0, 100)
+    confidence = (
+        daily * 0.24
+        + hrp * 1.35 * 0.22
+        + dinger100 * 0.16
+        + power * 0.12
+        + matchup * 0.09
+        + pitcher * 0.07
+        + park * 0.04
+        + weather * 0.04
+        + clamp(season_hr / 20 * 100, 0, 100) * 0.03
+        + diversity * 0.07
+    )
+    return round(clamp(confidence, 0, 100), 1)
+
+def build_elite_6_three_leg_hr_combos(pool):
+    if pool is None or pool.empty:
+        return []
+    p = pool.copy()
+    if "Daily Dinger Score" not in p.columns:
+        p["Daily Dinger Score"] = (
+            p["HR %"].apply(safe_float) * 0.35
+            + p["Dinger Score"].apply(safe_float) * 0.25
+            + p["Power"].apply(safe_float) * 20 * 0.15
+            + p["Pitcher Risk"].apply(safe_float) * 20 * 0.10
+            + p["Park Edge"].apply(safe_float) * 20 * 0.07
+            + p["Weather Edge"].apply(safe_float) * 20 * 0.08
+        )
+    p["Leg Quality"] = (
+        p["Daily Dinger Score"].apply(safe_float) * 0.28
+        + p["HR %"].apply(safe_float) * 1.2 * 0.24
+        + (p["Dinger Score"].apply(safe_float) / 42 * 100) * 0.18
+        + p["Power"].apply(safe_float) * 100 * 0.12
+        + p["Auto Matchup Edge"].apply(safe_float) * 100 * 0.10
+        + p["Pitcher Risk"].apply(safe_float) * 100 * 0.04
+        + p["Park Edge"].apply(safe_float) * 100 * 0.02
+        + p["Weather Edge"].apply(safe_float) * 100 * 0.02
+    )
+    for col, wt in [
+        ("Statcast Read Edge", 3.0), ("Pitch CSV Edge", 2.0),
+        ("Wind Physics Edge", 2.5), ("Lineup Protection Edge", 1.5),
+        ("Team Total Edge", 1.5), ("Bullpen HR Weakness", 1.5),
+    ]:
+        if col in p.columns:
+            p["Leg Quality"] += p[col].apply(safe_float) * wt
+    p = p.sort_values("Leg Quality", ascending=False).reset_index(drop=True)
+
+    def pick_combo(source, offset=0, min_grade="B"):
+        if source is None or source.empty:
+            return pd.DataFrame()
+        s = source.copy().reset_index(drop=True)
+        allowed = {
+            "B": ["S+","S","A+","A","B"],
+            "C": ["S+","S","A+","A","B","C"],
+            "D": ["S+","S","A+","A","B","C","D"],
+        }.get(min_grade, ["S+","S","A+","A","B"])
+        if "Grade" in s.columns:
+            s2 = s[s["Grade"].isin(allowed)]
+            if len(s2) >= 3:
+                s = s2.reset_index(drop=True)
+        if s.empty:
+            return pd.DataFrame()
+        offset = offset % len(s)
+        rotated = pd.concat([s.iloc[offset:], s.iloc[:offset]]).reset_index(drop=True)
+        selected, used_players, used_games = [], set(), set()
+        for _, r in rotated.iterrows():
+            if len(selected) >= 3:
+                break
+            if r["Player"] in used_players or r["Matchup"] in used_games:
+                continue
+            selected.append(r); used_players.add(r["Player"]); used_games.add(r["Matchup"])
+        if len(selected) < 3:
+            for _, r in rotated.iterrows():
+                if len(selected) >= 3:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                selected.append(r); used_players.add(r["Player"])
+        return pd.DataFrame(selected)
+
+    specs = [
+        ("🏆 Best Overall", p.sort_values(["Leg Quality","Daily Dinger Score"], ascending=[False, False]), 0, "B"),
+        ("🎯 Highest Probability", p.sort_values(["HR %","Leg Quality"], ascending=[False, False]), 1, "B"),
+        ("🔥 Weak Pitcher Attack", p.sort_values(["Pitcher Risk","Auto Matchup Edge","Leg Quality"], ascending=[False, False, False]), 2, "C"),
+        ("🌬️ Environment Boost", p.sort_values(["Weather Edge","Park Edge","Leg Quality"], ascending=[False, False, False]), 3, "C"),
+        ("⚡ Power + Weather", p.sort_values(["Power","Weather Edge","Park Edge","Leg Quality"], ascending=[False, False, False, False]), 4, "B"),
+        ("🧠 Sharp Read Combo", p.sort_values(["Leg Quality"], ascending=False), 5, "B"),
+    ]
+    if "Statcast Read Edge" in p.columns:
+        specs[-1] = ("🧠 Sharp Read Combo", p.sort_values(["Statcast Read Edge","Leg Quality"], ascending=[False, False]), 5, "B")
+
+    combos, used_sets = [], set()
+    for idx, (strategy, source, offset, min_grade) in enumerate(specs, 1):
+        combo = pd.DataFrame()
+        for bump in range(20):
+            test = pick_combo(source, offset + bump, min_grade=min_grade)
+            if len(test) != 3:
+                continue
+            names = tuple(sorted(test["Player"].astype(str).tolist()))
+            if names in used_sets:
+                continue
+            combo = test; used_sets.add(names); break
+        if len(combo) == 3:
+            combos.append({
+                "Parlay_ID": f"P{idx:03d}",
+                "Strategy": strategy,
+                "Combo Confidence": elite_combo_confidence_100(combo),
+                "Avg HR %": round(combo["HR %"].apply(safe_float).mean(), 1),
+                "Avg Dinger Score": round(combo["Dinger Score"].apply(safe_float).mean(), 1),
+                "Players": " • ".join(combo["Player"].astype(str).tolist()),
+                "Data": combo,
+            })
+    combos = sorted(combos, key=lambda x: x["Combo Confidence"], reverse=True)
+    for i, item in enumerate(combos, 1):
+        item["Parlay_ID"] = f"P{i:03d}"
+    return combos
+
+def render_elite_6_mobile_parlays(portfolio):
+    if portfolio is None or len(portfolio) == 0:
+        return "<div class='note'>No parlays generated.</div>"
+    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Combo Confidence is 0–100 and rewards HR probability, power, matchup, pitcher weakness, park/weather, and diversification.</div>"
+    html += "<div class='parlay-wrap'>"
+    for item in portfolio:
+        combo = item.get("Data", pd.DataFrame())
+        if combo is None or combo.empty:
+            continue
+        html += f"""
+        <div class='parlay-card-mobile'>
+            <div class='parlay-header-mobile'>
+                <div class='parlay-title-mobile'>{item.get('Strategy','')}</div>
+                <div class='parlay-score-mobile'>{item.get('Combo Confidence','')}/100</div>
+            </div>
+        """
+        for leg_num, (_, r) in enumerate(combo.reset_index(drop=True).iterrows(), 1):
+            power = round(safe_float(r.get("Power", 0)) * 100)
+            html += f"""
+            <div class='parlay-player-mobile'>
+                <div class='parlay-name-mobile'>#{leg_num} {r.get('Player','')} — {r.get('Team','')}</div>
+                <div class='parlay-sub-mobile'>vs {r.get('Pitcher','')} • {r.get('Park','')} • {r.get('Game Weather','')}</div>
+                <div class='parlay-metrics-mobile'>
+                    <div class='metric-pill-mobile'>HR% {r.get('HR %','')}</div>
+                    <div class='metric-pill-mobile'>{r.get('Grade','')}</div>
+                    <div class='metric-pill-mobile'>Score {r.get('Dinger Score','')}</div>
+                    <div class='metric-pill-mobile'>HR {r.get('Season HR','')}</div>
+                    <div class='metric-pill-mobile'>PWR {power}</div>
+                    <div class='metric-pill-mobile'>P Risk {r.get('Pitcher Risk','')}</div>
+                </div>
+            </div>
+            """
+        html += "</div>"
+    html += "</div>"
+    return html
+
+
 tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🏆 Slate Picks","📱 Mobile HR","📋 Full HR","🎯 Strikeouts","🧾 Dynamic Parlays","🔎 Breakdown","🛠 Debug"])
 
 with tab0:
@@ -3262,8 +3453,8 @@ with tab4:
         st.warning("Not enough eligible players to build a tiered 3-leg HR parlay.")
 
     st.markdown('### 🏆 Generated 3-Leg HR Parlays')
-    generated_portfolio = build_best_10_three_leg_hr_combos(parlay_pool, max_combos=10)
-    st.markdown(render_generated_parlays_mobile(generated_portfolio), unsafe_allow_html=True)
+    generated_portfolio = build_elite_6_three_leg_hr_combos(parlay_pool)
+    st.markdown(render_elite_6_mobile_parlays(generated_portfolio), unsafe_allow_html=True)
 
 
     st.markdown("### ✅ Hit Parlays")
