@@ -2938,6 +2938,96 @@ def parlay_weather_badge(alert):
         return "parlay-weather-bad", "BAD"
     return "parlay-weather-mid", "NEUTRAL"
 
+
+def render_generated_parlays_mobile(portfolio):
+    if portfolio is None or len(portfolio) == 0:
+        return "<div class='note'>No parlays generated.</div>"
+
+    html = """
+    <style>
+    .parlay-card{
+        background:linear-gradient(180deg,#071427,#091a33);
+        border:1px solid rgba(255,255,255,.10);
+        border-radius:18px;
+        padding:14px;
+        margin-bottom:18px;
+    }
+    .parlay-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:10px;
+        font-weight:700;
+        font-size:20px;
+    }
+    .parlay-score{
+        background:#123d22;
+        color:#9cffb4;
+        padding:6px 12px;
+        border-radius:999px;
+        font-size:16px;
+    }
+    .parlay-player{
+        background:rgba(255,255,255,.04);
+        border-radius:14px;
+        padding:12px;
+        margin-top:10px;
+    }
+    .parlay-name{
+        font-size:22px;
+        font-weight:700;
+    }
+    .parlay-sub{
+        opacity:.8;
+        font-size:15px;
+        margin-top:4px;
+    }
+    .parlay-metrics{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:10px;
+    }
+    .metric-pill{
+        background:rgba(255,255,255,.08);
+        padding:6px 10px;
+        border-radius:999px;
+        font-size:14px;
+    }
+    </style>
+    """
+
+    for _, row in portfolio.iterrows():
+        html += f"""
+        <div class='parlay-card'>
+            <div class='parlay-header'>
+                <div>🏆 {row.get('Parlay_ID','')} - {row.get('Strategy','')}</div>
+                <div class='parlay-score'>{round(float(row.get('Combo Confidence',0)),1)}/100</div>
+            </div>
+        """
+
+        for i in [1,2,3]:
+            player = row.get(f"Leg {i}", "")
+            if player:
+                html += f"""
+                <div class='parlay-player'>
+                    <div class='parlay-name'>#{i} {player}</div>
+                    <div class='parlay-sub'>{row.get(f'Leg {i} Team','')} vs {row.get(f'Leg {i} Pitcher','')}</div>
+
+                    <div class='parlay-metrics'>
+                        <div class='metric-pill'>HR%: {row.get(f'Leg {i} HR %','')}</div>
+                        <div class='metric-pill'>Score: {row.get(f'Leg {i} Dinger','')}</div>
+                        <div class='metric-pill'>Grade: {row.get(f'Leg {i} Grade','')}</div>
+                        <div class='metric-pill'>{row.get(f'Leg {i} Weather','')}</div>
+                    </div>
+                </div>
+                """
+
+        html += "</div>"
+
+    return html
+
+
 def render_generated_parlays(portfolio):
     if not portfolio:
         return "<div class='note'>No generated parlays available.</div>"
@@ -2974,11 +3064,7 @@ def render_generated_parlays(portfolio):
 
     summary_df = pd.DataFrame(rows)
 
-    html += render(summary_df, [
-        "Parlay_ID","Strategy","Combo Confidence",
-        "Leg 1","Leg 1 HR %","Leg 2","Leg 2 HR %","Leg 3","Leg 3 HR %",
-        "Avg HR %"
-    ])
+    
 
     # Full leg detail board underneath, same style as the rest of the model
     detail_rows = []
@@ -3203,7 +3289,7 @@ with tab4:
 
     st.markdown('### 🏆 Generated 3-Leg HR Parlays')
     generated_portfolio = build_best_10_three_leg_hr_combos(parlay_pool, max_combos=10)
-    st.markdown(render_generated_parlays(generated_portfolio), unsafe_allow_html=True)
+    st.markdown(render_generated_parlays_mobile(generated_portfolio), unsafe_allow_html=True)
 
 
     st.markdown("### ✅ Hit Parlays")
