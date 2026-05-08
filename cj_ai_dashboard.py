@@ -2956,16 +2956,18 @@ def render_generated_parlays_mobile(portfolio):
         display:flex;
         justify-content:space-between;
         align-items:center;
+        gap:10px;
         margin-bottom:10px;
-        font-weight:700;
-        font-size:20px;
+        font-weight:800;
+        font-size:18px;
     }
     .parlay-score{
         background:#123d22;
         color:#9cffb4;
         padding:6px 12px;
         border-radius:999px;
-        font-size:16px;
+        font-size:14px;
+        white-space:nowrap;
     }
     .parlay-player{
         background:rgba(255,255,255,.04);
@@ -2974,12 +2976,13 @@ def render_generated_parlays_mobile(portfolio):
         margin-top:10px;
     }
     .parlay-name{
-        font-size:22px;
-        font-weight:700;
+        font-size:18px;
+        font-weight:800;
+        color:#fff;
     }
     .parlay-sub{
-        opacity:.8;
-        font-size:15px;
+        opacity:.82;
+        font-size:13px;
         margin-top:4px;
     }
     .parlay-metrics{
@@ -2992,36 +2995,41 @@ def render_generated_parlays_mobile(portfolio):
         background:rgba(255,255,255,.08);
         padding:6px 10px;
         border-radius:999px;
-        font-size:14px;
+        font-size:12px;
+        font-weight:700;
     }
     </style>
     """
 
-    for _, row in portfolio.iterrows():
+    for item in portfolio:
+        combo = item.get("Data", pd.DataFrame())
+        if combo is None or combo.empty:
+            continue
+
+        conf = safe_float(item.get("Combo Confidence", 0), 0)
         html += f"""
         <div class='parlay-card'>
             <div class='parlay-header'>
-                <div>🏆 {row.get('Parlay_ID','')} - {row.get('Strategy','')}</div>
-                <div class='parlay-score'>{round(float(row.get('Combo Confidence',0)),1)}/100</div>
+                <div>🏆 {item.get('Parlay_ID','')} - {item.get('Strategy','')}</div>
+                <div class='parlay-score'>{round(conf,1)}/100</div>
             </div>
         """
 
-        for i in [1,2,3]:
-            player = row.get(f"Leg {i}", "")
-            if player:
-                html += f"""
-                <div class='parlay-player'>
-                    <div class='parlay-name'>#{i} {player}</div>
-                    <div class='parlay-sub'>{row.get(f'Leg {i} Team','')} vs {row.get(f'Leg {i} Pitcher','')}</div>
-
-                    <div class='parlay-metrics'>
-                        <div class='metric-pill'>HR%: {row.get(f'Leg {i} HR %','')}</div>
-                        <div class='metric-pill'>Score: {row.get(f'Leg {i} Dinger','')}</div>
-                        <div class='metric-pill'>Grade: {row.get(f'Leg {i} Grade','')}</div>
-                        <div class='metric-pill'>{row.get(f'Leg {i} Weather','')}</div>
-                    </div>
+        for i, (_, r) in enumerate(combo.reset_index(drop=True).iterrows(), 1):
+            html += f"""
+            <div class='parlay-player'>
+                <div class='parlay-name'>#{i} {r.get('Player','')} — {r.get('Team','')}</div>
+                <div class='parlay-sub'>vs {r.get('Pitcher','')} • {r.get('Park','')} • {r.get('Game Weather','')}</div>
+                <div class='parlay-metrics'>
+                    <div class='metric-pill'>HR%: {r.get('HR %','')}</div>
+                    <div class='metric-pill'>Score: {r.get('Dinger Score','')}</div>
+                    <div class='metric-pill'>Grade: {r.get('Grade','')}</div>
+                    <div class='metric-pill'>Power: {r.get('Power','')}</div>
+                    <div class='metric-pill'>Pitcher Risk: {r.get('Pitcher Risk','')}</div>
+                    <div class='metric-pill'>Season HR: {r.get('Season HR','')}</div>
                 </div>
-                """
+            </div>
+            """
 
         html += "</div>"
 
@@ -3120,14 +3128,7 @@ with tab0:
         k = best_k_pitcher.iloc[0]
         st.markdown(f"""
         <div class='card'>
-            <h2>🎯 Best Pitcher for K's</h2>
-            <h3>{k['Pitcher']} vs {k['Opponent']}</h3>
-            <p><b>Best K%:</b> {k['Best K%']}% | <b>Projected Ks:</b> {k['Projected Ks']} | <b>Grade:</b> {k['Grade']}</p>
-            <p><b>K/9:</b> {k['K/9']} | <b>ERA:</b> {k['ERA']} | <b>WHIP:</b> {k['WHIP']}</p>
-        </div>
-        """, unsafe_allow_html=True)
     else:
-        st.markdown("<div class='card'><h2>🎯 Best Pitcher for K's</h2><p>No K picks available.</p></div>", unsafe_allow_html=True)
 
     st.markdown("### ✅ Best 10 Players for Hits")
     best_hits_10 = parlay_pool.sort_values("Hit %", ascending=False).head(10) if not parlay_pool.empty else df.sort_values("Hit %", ascending=False).head(10)
