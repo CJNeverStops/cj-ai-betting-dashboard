@@ -183,6 +183,17 @@ st.markdown("""
   .target-weather-good,.target-weather-mid,.target-weather-bad { font-size:8px; padding:4px 3px; }
 }
 
+
+.parlay-hero { background:rgba(34,197,94,.16); border:1px solid rgba(34,197,94,.35); color:#86efac; border-radius:16px; padding:16px; font-size:20px; font-weight:900; margin:12px 0 18px; }
+.parlay-note { color:#cbd5e1; font-size:15px; margin:10px 0 20px; }
+.parlay-card { background:#0b1220; border:1px solid #334155; border-radius:16px; padding:14px; margin:10px 0; }
+.parlay-title { font-size:18px; font-weight:900; color:#f8fafc; margin-bottom:8px; }
+.parlay-meta { color:#94a3b8; font-size:12px; margin-bottom:8px; }
+.parlay-leg { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px; margin:7px 0; }
+.parlay-leg b { color:#fff; }
+.parlay-green { color:#86efac; font-weight:900; }
+.parlay-yellow { color:#fde68a; font-weight:900; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -2730,6 +2741,152 @@ def builder_combo_confidence(combo_df):
         return 0
     return round((combo_df["HR %"].apply(safe_float) / 100).prod() * 100, 4)
 
+
+def build_generated_parlay_portfolio(pool):
+    if pool is None or pool.empty:
+        return []
+
+    p = pool.copy()
+
+    if "Daily Dinger Score" not in p.columns:
+        p["Daily Dinger Score"] = (
+            p["HR %"].apply(safe_float) * 0.35
+            + p["Dinger Score"].apply(safe_float) * 0.25
+            + p["Power"].apply(safe_float) * 20 * 0.15
+            + p["Pitcher Risk"].apply(safe_float) * 20 * 0.10
+            + p["Park Edge"].apply(safe_float) * 20 * 0.07
+            + p["Weather Edge"].apply(safe_float) * 20 * 0.08
+        )
+
+    p["Portfolio Score"] = (
+        p["Daily Dinger Score"].apply(safe_float) * 0.45
+        + p["HR %"].apply(safe_float) * 0.25
+        + p["Dinger Score"].apply(safe_float) * 0.15
+        + p["Power"].apply(safe_float) * 15 * 0.10
+        + p["Pitcher Risk"].apply(safe_float) * 15 * 0.05
+    )
+
+    p = p.sort_values("Portfolio Score", ascending=False).reset_index(drop=True)
+
+    def pick_combo(source, legs=3, offset=0, allow_same_game=False):
+        selected = []
+        used_games = set()
+        used_players = set()
+
+        if source is None or source.empty:
+            return pd.DataFrame()
+
+        rotated = pd.concat([source.iloc[offset:], source.iloc[:offset]]).reset_index(drop=True)
+
+        for _, r in rotated.iterrows():
+            if len(selected) >= legs:
+                break
+            if r["Player"] in used_players:
+                continue
+            if not allow_same_game and r["Matchup"] in used_games:
+                continue
+            selected.append(r)
+            used_players.add(r["Player"])
+            used_games.add(r["Matchup"])
+
+        if len(selected) < legs:
+            for _, r in rotated.iterrows():
+                if len(selected) >= legs:
+                    break
+                if r["Player"] in used_players:
+                    continue
+                selected.append(r)
+                used_players.add(r["Player"])
+
+        return pd.DataFrame(selected)
+
+    elite = p[p["Grade"].isin(["S+", "S", "A+"])]
+    chalk = p.sort_values(["HR %", "Season HR"], ascending=[False, False])
+    env = p.sort_values(["Weather Edge", "Park Edge", "Power"], ascending=[False, False, False])
+    balanced = p.sort_values(["Portfolio Score", "Auto Matchup Edge", "Pitcher Risk"], ascending=[False, False, False])
+
+    portfolio_specs = [
+        ("P001", "Diversified", "1 player per game, best blended score", balanced, 0),
+        ("P002", "Elite Games", "Highest graded bats in best HR spots", elite if not elite.empty else p, 1),
+        ("P003", "Chalk Players", "Most likely HR names by model probability", chalk, 2),
+        ("P004", "Balanced Mix", "Power + weather + weak pitcher balance", env, 3),
+    ]
+
+    out = []
+    used_combo_sets = set()
+
+    for pid, strategy, desc, source, offset in portfolio_specs:
+        combo = pick_combo(source, legs=3, offset=offset, allow_same_game=False)
+
+        if len(combo) < 3:
+            combo = pick_combo(p, legs=3, offset=offset, allow_same_game=True)
+
+        if len(combo) == 3:
+            names = tuple(sorted(combo["Player"].astype(str).tolist()))
+            if names in used_combo_sets:
+                combo = pick_combo(p, legs=3, offset=offset + 4, allow_same_game=False)
+                names = tuple(sorted(combo["Player"].astype(str).tolist()))
+            used_combo_sets.add(names)
+
+            combo_prob = round((combo["HR %"].apply(safe_float) / 100).prod() * 100, 4)
+            avg_hr = round(combo["HR %"].apply(safe_float).mean(), 1)
+            avg_score = round(combo["Dinger Score"].apply(safe_float).mean(), 1)
+
+            out.append({
+                "Parlay_ID": pid,
+                "Strategy": strategy,
+                "Description": desc,
+                "Combo Probability %": combo_prob,
+                "Avg HR %": avg_hr,
+                "Avg Dinger Score": avg_score,
+                "Players": " • ".join(combo["Player"].astype(str).tolist()),
+                "Data": combo
+            })
+
+    return out
+
+def render_generated_parlays(portfolio):
+    if not portfolio:
+        return "<div class='note'>No generated parlays available.</div>"
+
+    html = ""
+    html += "<div class='parlay-hero'>🛡️ Zero correlation risk - Full diversification enforced (1 player per game)</div>"
+    html += f"<div class='parlay-note'>💡 Portfolio includes {len(portfolio)} fully diversified parlays for risk protection</div>"
+    html += "<h2>🏆 Generated Parlays</h2>"
+
+    for item in portfolio:
+        combo = item["Data"]
+        title = f"{item['Parlay_ID']} - {item['Strategy']} ({item['Combo Probability %']}% combo)"
+        html += f"""
+        <details class='parlay-card'>
+            <summary class='parlay-title'>{title}</summary>
+            <div class='parlay-meta'>{item['Description']} | Avg HR: {item['Avg HR %']}% | Avg Score: {item['Avg Dinger Score']}</div>
+        """
+        for _, r in combo.iterrows():
+            html += f"""
+            <div class='parlay-leg'>
+                <b>{r['Player']}</b> — {r['Team']}<br>
+                <span class='parlay-green'>HR {r['HR %']}%</span> • Grade {r['Grade']} {r['Badge']} • vs {r['Pitcher']}<br>
+                <span class='parlay-yellow'>Park:</span> {r['Park']} • {r.get('Game Weather','')} • Pitcher Risk {r.get('Pitcher Risk','')}
+            </div>
+            """
+        html += "</details>"
+
+    rows = []
+    for item in portfolio:
+        rows.append({
+            "Parlay_ID": item["Parlay_ID"],
+            "Strategy": item["Strategy"],
+            "Players": item["Players"],
+            "Combo Probability %": item["Combo Probability %"],
+            "Avg HR %": item["Avg HR %"],
+            "Avg Dinger Score": item["Avg Dinger Score"],
+        })
+
+    summary_df = pd.DataFrame(rows)
+    html += render(summary_df, ["Parlay_ID","Strategy","Players","Combo Probability %","Avg HR %","Avg Dinger Score"])
+    return html
+
 parlay_hr = smart_hr_parlays(parlay_pool)
 parlay_hit = tier_parlays(parlay_pool, "Hit %", "Hit")
 parlay_tb = tier_parlays(parlay_pool, "TB %", "TB")
@@ -3068,6 +3225,11 @@ with tab3:
 
 with tab4:
     st.subheader("🧾 Dynamic Parlays + Daily Dinger List")
+
+    generated_portfolio = build_generated_parlay_portfolio(parlay_pool)
+    st.markdown(render_generated_parlays(generated_portfolio), unsafe_allow_html=True)
+
+
 
     st.markdown("<div class='note'>Top dinger targets combine true HR probability + same-day read factors: exact barrel CSV, handedness, pitch-type matchup, recent power, team totals, bullpen HR weakness, wind physics, home/away, and lineup protection.</div>", unsafe_allow_html=True)
 
