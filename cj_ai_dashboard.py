@@ -47,7 +47,7 @@ td:nth-child(2), th:nth-child(2) {
 """, unsafe_allow_html=True)
 
 
-REFRESH_SECONDS = 300
+REFRESH_SECONDS = 120
 
 # FAST MODE:
 # True = app loads fast. Uses real MLB.com stats + safe advanced proxies.
@@ -423,10 +423,54 @@ def color_grade(g):
     }.get(g, "#374151")
 
 def is_game_available_for_parlays(status):
+    """
+    Generated parlays only use players from games that have NOT started yet.
+    Live/final/delayed/postponed/suspended/cancelled games are removed.
+    """
     s = str(status).lower().strip()
-    bad = ["in progress", "live", "final", "game over", "completed early", "postponed", "cancelled"]
+
+    bad = [
+        "in progress",
+        "live",
+        "warmup",
+        "manager challenge",
+        "review",
+        "final",
+        "game over",
+        "completed early",
+        "postponed",
+        "cancelled",
+        "delayed",
+        "delay",
+        "suspended",
+        "started"
+    ]
+
     return not any(x in s for x in bad)
 
+
+
+def build_upcoming_parlay_pool(source_df):
+    """
+    Rebuilds the parlay pool from only upcoming/not-started games.
+    This is what makes generated parlays change as games start.
+    """
+    if source_df is None or source_df.empty:
+        return pd.DataFrame()
+
+    pool = source_df.copy()
+
+    if "Parlay Eligible" in pool.columns:
+        pool = pool[pool["Parlay Eligible"].astype(str) == "Yes"].copy()
+
+    if "Game Status" in pool.columns:
+        pool = pool[pool["Game Status"].apply(is_game_available_for_parlays)].copy()
+
+    if pool.empty:
+        return pool
+
+    sort_col = "Daily Dinger Score" if "Daily Dinger Score" in pool.columns else "Dinger Score"
+    return pool.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
 # =========================
 # SHARP BETTING / ODDS HELPERS
@@ -1911,7 +1955,7 @@ if df.empty:
     st.stop()
 
 df = df.sort_values("Dinger Score", ascending=False).reset_index(drop=True)
-parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Dinger Score", ascending=False).reset_index(drop=True)
+parlay_pool = build_upcoming_parlay_pool(df)
 
 top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 top3_hr_picks = parlay_pool.head(3) if not parlay_pool.empty else df.head(3)
@@ -2238,7 +2282,7 @@ df["Daily Dinger Score"] = (
     + df.get("Today Environment Edge", pd.Series([0.5] * len(df))).apply(safe_float) * 20 * 0.08
 )
 df = df.sort_values("Daily Dinger Score", ascending=False).reset_index(drop=True)
-parlay_pool = df[df["Parlay Eligible"] == "Yes"].copy().sort_values("Daily Dinger Score", ascending=False).reset_index(drop=True)
+parlay_pool = build_upcoming_parlay_pool(df)
 top_hr_pick = parlay_pool.head(1) if not parlay_pool.empty else df.head(1)
 best_matchup_pick = parlay_pool.sort_values("Auto Matchup Edge", ascending=False).head(1) if not parlay_pool.empty else df.sort_values("Auto Matchup Edge", ascending=False).head(1)
 top_mlb_api = df[df["Data Source"].astype(str).str.contains("MLB API", na=False)].sort_values("Dinger Score", ascending=False).head(20)
@@ -2826,7 +2870,10 @@ def build_best_10_three_leg_hr_combos(pool, max_combos=10):
     if pool is None or pool.empty:
         return []
 
-    p = pool.copy()
+    p = build_upcoming_parlay_pool(pool)
+
+    if p is None or p.empty:
+        return []
 
     if "Daily Dinger Score" not in p.columns:
         p["Daily Dinger Score"] = (
@@ -3166,7 +3213,11 @@ def elite_combo_confidence_100(combo_df):
 def build_elite_6_three_leg_hr_combos(pool):
     if pool is None or pool.empty:
         return []
-    p = pool.copy()
+
+    p = build_upcoming_parlay_pool(pool)
+
+    if p is None or p.empty:
+        return []
     if "Daily Dinger Score" not in p.columns:
         p["Daily Dinger Score"] = (
             p["HR %"].apply(safe_float) * 0.35
@@ -3268,7 +3319,7 @@ def build_elite_6_three_leg_hr_combos(pool):
 def render_elite_6_mobile_parlays(portfolio):
     if portfolio is None or len(portfolio) == 0:
         return "<div class='note'>No parlays generated.</div>"
-    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Combo Confidence is 0–100 and rewards HR probability, power, matchup, pitcher weakness, park/weather, and diversification.</div>"
+    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Generated parlays auto-remove live/final/delayed/postponed games and rebuild from upcoming games every 2 minutes. Combo Confidence is 0–100.</div>"
     html += "<div class='parlay-wrap'>"
     for item in portfolio:
         combo = item.get("Data", pd.DataFrame())
@@ -3311,7 +3362,7 @@ def render_elite_6_parlays_like_model(portfolio):
     if portfolio is None or len(portfolio) == 0:
         return "<div class='note'>No parlays generated.</div>"
 
-    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Combo Confidence is scored 0–100.</div>"
+    html = "<div class='note'><b>🏆 Elite 3-Leg HR Combos</b><br>Only the 6 best betting combo types are shown. Generated parlays auto-remove live/final/delayed/postponed games and rebuild from upcoming games every 2 minutes. Combo Confidence is scored 0–100.</div>"
 
     summary_rows = []
 
@@ -3402,6 +3453,8 @@ with tab3:
 
 with tab4:
     st.subheader("🧾 Daily Dinger List + Generated Parlays")
+    st.markdown(f"<div class='note'><b>🔄 Parlay auto-update status:</b> {len(parlay_pool)} eligible upcoming players. Live/final/delayed/postponed games are removed and combos rebuild every {REFRESH_SECONDS//60} minutes.</div>", unsafe_allow_html=True)
+
 
 
 
@@ -3564,6 +3617,8 @@ with tab6:
     st.write("Projected/Injected rows:", int((df["Lineup"].astype(str) == "Projected/Injected").sum()) if "Lineup" in df.columns else 0)
     st.write("Grade distribution:", df["Grade"].value_counts().to_dict() if "Grade" in df.columns else {})
     st.write("Dynamic parlay pool players:", len(parlay_pool))
+    st.write("Parlay auto-update refresh seconds:", REFRESH_SECONDS)
+    st.write("Parlay status filter:", "Only upcoming/not-started games are eligible")
     st.write("Pitchers scored:", len(k_df))
     st.write("Games loaded:", len(games_all))
     st.write("Upcoming/non-final games shown:", len(games))
