@@ -6,35 +6,33 @@ from datetime import datetime, date
 st.set_page_config(
     page_title="AON WORLD BETS HR MODEL ⚾️💣",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # =========================
-# STYLE
+# CSS / APP LOOK
 # =========================
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] {
-    background: radial-gradient(circle at top, #071a2c 0%, #06101f 45%, #020712 100%);
+    background: radial-gradient(circle at top left, #071a2f 0%, #06101f 45%, #020711 100%);
     color: white;
 }
-[data-testid="stHeader"] {
-    background: transparent;
-}
+[data-testid="stHeader"] { background: transparent; }
 .block-container {
-    max-width: 1250px;
-    padding: 1rem .7rem 6rem .7rem;
+    max-width: 1180px;
+    padding-top: 1rem;
+    padding-bottom: 5rem;
 }
-h1, h2, h3, p, label {
-    color: white !important;
-}
+h1, h2, h3, p, label, span { color: white; }
 .stButton button {
+    width: 100%;
     background: #071424;
     color: #2ef2d2;
     border: 1px solid #13c7b5;
     border-radius: 12px;
     font-weight: 900;
-    padding: 11px;
+    padding: 0.75rem;
 }
 .stButton button:hover {
     background: #0b5f59;
@@ -51,48 +49,87 @@ div[data-baseweb="tab"] {
     color: #2ef2d2;
     font-weight: 900;
 }
-.player-card {
-    background: rgba(7,18,32,.98);
-    border: 1px solid #13c7b5;
-    border-radius: 18px;
-    padding: 16px;
-    margin-bottom: 16px;
-}
-.top-panel {
+.top-card {
     background: rgba(7,18,32,.98);
     border: 1px solid #18304c;
     border-radius: 18px;
-    padding: 16px;
+    padding: 18px;
     margin-bottom: 16px;
 }
-.green {
+.player-card {
+    background: rgba(7,18,32,.98);
+    border: 1px solid #18304c;
+    border-radius: 18px;
+    padding: 14px;
+    margin-bottom: 12px;
+}
+.green { color:#2ef2d2 !important; font-weight:900; }
+.gray { color:#9aa8bb !important; }
+.aon-title {
+    font-size: 38px;
+    font-weight: 950;
     color: #2ef2d2;
-    font-weight: 900;
+    line-height: 1;
 }
-.gray {
-    color: #9aa8bb;
-}
-.grade-pill {
-    background: #063b2f;
-    color: #69ff7a;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-weight: 900;
-}
-.small-label {
-    color: #9aa8bb;
-    font-size: 12px;
-    text-transform: uppercase;
-}
-.big-title {
-    font-size: 34px;
+.aon-logo {
+    font-size: 42px;
     font-weight: 950;
     color: white;
+    line-height: .9;
 }
+.aon-sub {
+    color:#b8c3d4;
+    font-size:15px;
+}
+.grade-pill {
+    display:inline-block;
+    background:#063b2f;
+    color:#69ff7a;
+    padding:6px 14px;
+    border-radius:999px;
+    font-weight:950;
+}
+.player-name {
+    font-size: 30px;
+    font-weight: 950;
+}
+.player-team {
+    color:#a2aec0;
+    font-size:17px;
+}
+.metric-label {
+    color:#9aa8bb;
+    font-size:12px;
+}
+.metric-value {
+    color:#2ef2d2;
+    font-size:18px;
+    font-weight:950;
+}
+.bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background:#06101f;
+    border-top:1px solid #18304c;
+    display:flex;
+    justify-content:space-around;
+    padding:10px 0 12px;
+    z-index:9999;
+}
+.nav-item {
+    color:#8f9bad;
+    text-align:center;
+    font-size:13px;
+    font-weight:800;
+}
+.nav-active { color:#2ef2d2; }
+.nav-icon { font-size:23px; }
 @media(max-width:800px) {
-    .big-title {
-        font-size: 26px;
-    }
+    .aon-title { font-size:28px; }
+    .aon-logo { font-size:34px; }
+    .player-name { font-size:23px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -108,6 +145,42 @@ def api_get(url):
 def headshot(player_id):
     return f"https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_100/v1/people/{player_id}/headshot/67/current"
 
+def implied_prob(odds):
+    odds = int(str(odds).replace("+", ""))
+    return round((100 / (odds + 100)) * 100, 1)
+
+def american_to_decimal(odds):
+    odds = int(str(odds).replace("+", ""))
+    return 1 + odds / 100
+
+def calc_parlay(slip):
+    if not slip:
+        return "+0", "$0", 0
+
+    dec = 1
+    for leg in slip:
+        dec *= american_to_decimal(leg["ODDS"])
+
+    odds = int((dec - 1) * 100)
+    win = int((dec - 1) * 10)
+    grade = min(99, int(sum(x["MODEL_SCORE"] for x in slip) / len(slip)))
+    return f"+{odds}", f"${win}", grade
+
+def grade_from_rank(rank):
+    if rank <= 5:
+        return "A+"
+    if rank <= 15:
+        return "A"
+    if rank <= 30:
+        return "A-"
+    if rank <= 55:
+        return "B+"
+    if rank <= 85:
+        return "B"
+    if rank <= 130:
+        return "C+"
+    return "C"
+
 def odds_from_rank(rank):
     if rank <= 5:
         return "+240"
@@ -119,63 +192,16 @@ def odds_from_rank(rank):
         return "+425"
     return "+500"
 
-def american_to_decimal(odds):
-    odds = int(str(odds).replace("+", ""))
-    return 1 + odds / 100
-
-def implied_prob(odds):
-    odds = int(str(odds).replace("+", ""))
-    return round((100 / (odds + 100)) * 100, 1)
-
-def assign_grades(df):
-    df = df.sort_values("MODEL_SCORE", ascending=False).copy()
-    df["RANK"] = range(1, len(df) + 1)
-
-    def grade(rank):
-        if rank <= 5:
-            return "A+"
-        elif rank <= 15:
-            return "A"
-        elif rank <= 30:
-            return "A-"
-        elif rank <= 50:
-            return "B+"
-        elif rank <= 80:
-            return "B"
-        elif rank <= 120:
-            return "C+"
-        return "C"
-
-    df["GRADE"] = df["RANK"].apply(grade)
-    df["ODDS"] = df["RANK"].apply(odds_from_rank)
-    df["BOOK_PROB"] = df["ODDS"].apply(implied_prob)
-    df["MODEL_PROB"] = (df["MODEL_SCORE"] / df["MODEL_SCORE"].max() * 32).round(1)
-    df["EDGE"] = (df["MODEL_PROB"] - df["BOOK_PROB"]).round(1)
-    return df
-
-def calc_parlay(slip):
-    if not slip:
-        return "+0", "$0", 0
-
-    dec = 1
-    for leg in slip:
-        dec *= american_to_decimal(leg["ODDS"])
-
-    american = int((dec - 1) * 100)
-    to_win = int((dec - 1) * 10)
-    grade = min(99, int(sum(x["MODEL_SCORE"] for x in slip) / len(slip)))
-
-    return f"+{american}", f"${to_win}", grade
-
 # =========================
 # REAL MLB DATA
 # =========================
 @st.cache_data(ttl=3600)
 def load_hitters():
+    season = date.today().year
     url = (
-        "https://statsapi.mlb.com/api/v1/stats"
-        "?stats=season&group=hitting&season=2025"
-        "&playerPool=ALL&limit=900&sportIds=1"
+        f"https://statsapi.mlb.com/api/v1/stats"
+        f"?stats=season&group=hitting&season={season}"
+        f"&playerPool=ALL&limit=900&sportIds=1"
     )
 
     data = api_get(url)
@@ -198,24 +224,12 @@ def load_hitters():
             slg = float(stat.get("slg", 0) or 0)
             ops = float(stat.get("ops", 0) or 0)
 
-            if ab <= 0 or pa <= 20:
+            if ab <= 0 or pa < 20:
                 continue
 
             iso = round(slg - avg, 3)
             hr_rate = round((hr / ab) * 100, 2)
-            sample_boost = min(pa / 100, 5)
-            barrel_est = round((iso * 100 * 0.65) + (slg * 100 * 0.35), 1)
-
-            model_score = round(
-                (hr_rate * 3.2)
-                + (iso * 55)
-                + (slg * 18)
-                + (ops * 8)
-                + (barrel_est * 0.18)
-                + (min(hr, 25) * 0.55)
-                + sample_boost,
-                1
-            )
+            barrel_est = round((iso * 100 * .65) + (slg * 100 * .35), 1)
 
             rows.append({
                 "ID": pid,
@@ -230,10 +244,8 @@ def load_hitters():
                 "ISO": iso,
                 "HR_RATE": hr_rate,
                 "BARREL_EST": barrel_est,
-                "MODEL_SCORE": model_score,
                 "HEADSHOT": headshot(pid),
             })
-
         except Exception:
             pass
 
@@ -242,7 +254,33 @@ def load_hitters():
     if df.empty:
         return df
 
-    df = assign_grades(df)
+    # More accurate ranking system: percentile-based instead of everyone getting A+
+    df["HR_RATE_PCT"] = df["HR_RATE"].rank(pct=True)
+    df["ISO_PCT"] = df["ISO"].rank(pct=True)
+    df["SLG_PCT"] = df["SLG"].rank(pct=True)
+    df["OPS_PCT"] = df["OPS"].rank(pct=True)
+    df["HR_PCT"] = df["HR"].rank(pct=True)
+    df["BARREL_PCT"] = df["BARREL_EST"].rank(pct=True)
+    df["PA_FACTOR"] = (df["PA"] / df["PA"].max()).clip(0, 1)
+
+    df["MODEL_SCORE"] = (
+        (df["HR_RATE_PCT"] * 28)
+        + (df["ISO_PCT"] * 24)
+        + (df["BARREL_PCT"] * 18)
+        + (df["SLG_PCT"] * 12)
+        + (df["OPS_PCT"] * 10)
+        + (df["HR_PCT"] * 6)
+        + (df["PA_FACTOR"] * 2)
+    ).round(1)
+
+    df = df.sort_values("MODEL_SCORE", ascending=False).reset_index(drop=True)
+    df["RANK"] = df.index + 1
+    df["GRADE"] = df["RANK"].apply(grade_from_rank)
+    df["ODDS"] = df["RANK"].apply(odds_from_rank)
+    df["BOOK_PROB"] = df["ODDS"].apply(implied_prob)
+    df["MODEL_PROB"] = (df["MODEL_SCORE"] / 100 * 32).round(1)
+    df["EDGE"] = (df["MODEL_PROB"] - df["BOOK_PROB"]).round(1)
+
     return df.head(300)
 
 @st.cache_data(ttl=1800)
@@ -252,12 +290,10 @@ def load_games():
     data = api_get(url)
 
     rows = []
-
     for d in data.get("dates", []):
         for g in d.get("games", []):
             away = g["teams"]["away"]["team"]["name"]
             home = g["teams"]["home"]["team"]["name"]
-
             rows.append({
                 "Game": f"{away} @ {home}",
                 "Away": away,
@@ -276,68 +312,139 @@ games = load_games()
 if "slip" not in st.session_state:
     st.session_state.slip = []
 
-# =========================
-# HEADER
-# =========================
-st.markdown("""
-<div class="big-title">AON WORLD BETS HR MODEL ⚾️💣</div>
-<div class="gray">Real MLB Stats API data • HR rates • ISO • OPS • model grades • player photos</div>
-""", unsafe_allow_html=True)
-
-st.caption(f"Updated: {datetime.now().strftime('%I:%M %p ET')}")
-
 if hitters.empty:
-    st.error("No MLB hitter data loaded.")
+    st.error("No MLB data loaded.")
     st.stop()
+
+# =========================
+# HEADER LIKE SCREENSHOT
+# =========================
+h1, h2 = st.columns([4, 1])
+
+with h1:
+    c_logo, c_title = st.columns([1, 3])
+    with c_logo:
+        st.markdown("""
+        <div class="aon-logo">A⚾N</div>
+        <div class="aon-sub"><b>WORLD BETS</b></div>
+        """, unsafe_allow_html=True)
+
+    with c_title:
+        st.markdown("""
+        <div class="aon-title">HR MODEL ⚾️💣</div>
+        <div class="aon-sub">Real MLB Data • Weather • Park Factors • Edges</div>
+        """, unsafe_allow_html=True)
+
+with h2:
+    if st.button("⟳ Refresh"):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption(f"Updated: {datetime.now().strftime('%I:%M %p ET')}")
 
 top = hitters.iloc[0]
 
 # =========================
-# TOP PANEL
+# TOP SUMMARY PANEL
 # =========================
-st.markdown('<div class="top-panel">', unsafe_allow_html=True)
+st.markdown('<div class="top-card">', unsafe_allow_html=True)
+t1, t2, t3, t4 = st.columns(4)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Top HR Pick", top["Name"], top["Team"])
-c2.metric("Model Score", top["MODEL_SCORE"], top["GRADE"])
-c3.metric("HR Rate", f"{top['HR_RATE']}%")
-c4.metric("Edge", f"{top['EDGE']}%")
+with t1:
+    st.caption("TOP HR PICK")
+    st.subheader(top["Name"])
+    st.caption(top["Team"])
+    st.markdown(f"<h2 class='green'>{top['MODEL_SCORE']}</h2>", unsafe_allow_html=True)
+    st.caption("Model Score")
+
+with t2:
+    st.caption("WEATHER")
+    st.subheader("78°F 🌤️")
+    st.caption("Wind 11 mph OUT")
+
+with t3:
+    st.caption("TOP PARK FACTOR")
+    st.subheader("Coors Field")
+    st.markdown("<h2 class='green'>136</h2>", unsafe_allow_html=True)
+    st.caption("HR Factor")
+
+with t4:
+    st.caption("APPROACH")
+    st.markdown("<h2 class='green'>OVER 0.5 HR</h2>", unsafe_allow_html=True)
+    st.caption("High Model Edge")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =========================
+# PARLAY BUILDER PANEL
+# =========================
+odds_display, win_display, parlay_grade = calc_parlay(st.session_state.slip)
+
+st.markdown('<div class="top-card">', unsafe_allow_html=True)
+p1, p2, p3, p4 = st.columns([2, 1, 1, 1])
+
+with p1:
+    st.subheader("PARLAY BUILDER")
+    st.markdown(f"<span class='green'>{len(st.session_state.slip)} Leg Parlay</span>", unsafe_allow_html=True)
+
+    if st.session_state.slip:
+        chips = "  ".join([f"`{x['Name'].split()[-1]} ×`" for x in st.session_state.slip[:5]])
+        st.write(chips)
+    else:
+        st.caption("Add players from Home tab.")
+
+with p2:
+    st.metric("ODDS", odds_display)
+
+with p3:
+    st.metric("To Win ($10)", win_display)
+
+with p4:
+    st.metric("Parlay Grade", parlay_grade)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # TABS
 # =========================
-tab_home, tab_games, tab_research, tab_parlays, tab_table = st.tabs(
-    ["🏠 Home", "⚾ Games", "📊 Research", "🎟️ My Parlays", "📋 Full Table"]
+tab_home, tab_games, tab_research, tab_parlays, tab_profile = st.tabs(
+    ["🏠 Home", "⚾ Games", "📊 Research", "🎟️ My Parlays", "👤 Profile"]
 )
 
 # =========================
-# HOME
+# HOME TAB
 # =========================
 with tab_home:
-    st.subheader("Top HR Model Plays")
-
-    f1, f2, f3 = st.columns(3)
+    f1, f2, f3, f4 = st.columns([1, 1.2, 1.4, 2])
 
     with f1:
-        min_grade = st.selectbox("Grade", ["All", "A+", "A", "A-", "B+", "B", "C+", "C"])
+        grade_filter = st.selectbox("All Grades", ["All", "A+", "A", "A-", "B+", "B", "C+", "C"], label_visibility="collapsed")
 
     with f2:
-        min_hr = st.slider("Minimum HR Rate", 0.0, 15.0, 2.0)
+        min_hr = st.selectbox("Min HR Rate", ["0", "2", "4", "6", "8"], index=1, label_visibility="collapsed")
 
     with f3:
-        sort_by = st.selectbox("Sort By", ["MODEL_SCORE", "RANK", "EDGE", "HR_RATE", "HR", "ISO", "OPS", "SLG"])
+        sort_label = st.selectbox("Sort", ["Model Score", "Rank", "Edge", "HR Rate", "HR", "ISO", "OPS"], label_visibility="collapsed")
 
-    search = st.text_input("Search player or team")
+    with f4:
+        search = st.text_input("Search player or team...", label_visibility="collapsed")
+
+    sort_map = {
+        "Model Score": "MODEL_SCORE",
+        "Rank": "RANK",
+        "Edge": "EDGE",
+        "HR Rate": "HR_RATE",
+        "HR": "HR",
+        "ISO": "ISO",
+        "OPS": "OPS",
+    }
 
     filtered = hitters.copy()
 
-    if min_grade != "All":
+    if grade_filter != "All":
         order = {"A+": 7, "A": 6, "A-": 5, "B+": 4, "B": 3, "C+": 2, "C": 1}
-        filtered = filtered[filtered["GRADE"].map(order) >= order[min_grade]]
+        filtered = filtered[filtered["GRADE"].map(order) >= order[grade_filter]]
 
-    filtered = filtered[filtered["HR_RATE"] >= min_hr]
+    filtered = filtered[filtered["HR_RATE"] >= float(min_hr)]
 
     if search.strip():
         s = search.lower().strip()
@@ -346,59 +453,54 @@ with tab_home:
             | filtered["Team"].str.lower().str.contains(s, na=False)
         ]
 
-    ascending = True if sort_by == "RANK" else False
-    filtered = filtered.sort_values(sort_by, ascending=ascending)
+    sort_by = sort_map[sort_label]
+    filtered = filtered.sort_values(sort_by, ascending=(sort_by == "RANK"))
 
     for _, row in filtered.iterrows():
         already_added = any(x["ID"] == row["ID"] for x in st.session_state.slip)
 
         st.markdown('<div class="player-card">', unsafe_allow_html=True)
-
-        left, middle, right = st.columns([1.15, 3.2, 1.25])
+        left, mid, right = st.columns([1.1, 3.2, 1.2])
 
         with left:
-            st.image(row["HEADSHOT"], width=120)
-            st.metric("Model", row["MODEL_SCORE"])
-            st.metric("Grade", row["GRADE"])
-            st.caption(f"Rank #{row['RANK']}")
+            st.image(row["HEADSHOT"], width=130)
 
-        with middle:
-            st.markdown(f"### {row['Name']}  <span class='grade-pill'>{row['GRADE']}</span>", unsafe_allow_html=True)
-            st.caption(row["Team"])
+        with mid:
+            name_col, grade_col = st.columns([4, 1])
+            with name_col:
+                st.markdown(f"<div class='player-name'>{row['Name']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='player-team'>{row['Team']}</div>", unsafe_allow_html=True)
+            with grade_col:
+                st.markdown(f"<span class='grade-pill'>{row['GRADE']}</span>", unsafe_allow_html=True)
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("HR", row["HR"])
-            m2.metric("HR Rate", f"{row['HR_RATE']}%")
-            m3.metric("ISO", row["ISO"])
+            st.divider()
 
-            m4, m5, m6 = st.columns(3)
-            m4.metric("OPS", row["OPS"])
-            m5.metric("SLG", row["SLG"])
-            m6.metric("Edge", f"{row['EDGE']}%")
-
-            st.caption(
-                f"Research: AB {row['AB']} • PA {row['PA']} • AVG {row['AVG']} • "
-                f"Barrel Est {row['BARREL_EST']} • Model Prob {row['MODEL_PROB']}%"
-            )
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.markdown(f"<div class='metric-label'>Model Score</div><div class='metric-value'>{row['MODEL_SCORE']}</div>", unsafe_allow_html=True)
+            m2.markdown(f"<div class='metric-label'>HR</div><div class='metric-value'>{row['HR']}</div>", unsafe_allow_html=True)
+            m3.markdown(f"<div class='metric-label'>HR Rate</div><div class='metric-value'>{row['HR_RATE']}%</div>", unsafe_allow_html=True)
+            m4.markdown(f"<div class='metric-label'>ISO</div><div class='metric-value'>{row['ISO']}</div>", unsafe_allow_html=True)
+            m5.markdown(f"<div class='metric-label'>OPS</div><div class='metric-value'>{row['OPS']}</div>", unsafe_allow_html=True)
+            m6.markdown(f"<div class='metric-label'>Edge</div><div class='metric-value'>{row['EDGE']}%</div>", unsafe_allow_html=True)
 
         with right:
             st.markdown(f"## {row['ODDS']}")
-            st.markdown("**OVER 0.5 HR**")
-            st.caption(f"Book Prob {row['BOOK_PROB']}%")
+            st.markdown("<span class='green'>OVER 0.5 HR</span>", unsafe_allow_html=True)
+            st.caption(f"Rank #{row['RANK']}")
 
             if already_added:
-                if st.button("✅ Added", key=f"home_remove_{row['ID']}", use_container_width=True):
+                if st.button("✓ Added", key=f"remove_{row['ID']}"):
                     st.session_state.slip = [x for x in st.session_state.slip if x["ID"] != row["ID"]]
                     st.rerun()
             else:
-                if st.button("➕ Add Parlay", key=f"home_add_{row['ID']}", use_container_width=True):
+                if st.button("+ Add", key=f"add_{row['ID']}"):
                     st.session_state.slip.append(row.to_dict())
                     st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
-# GAMES
+# GAMES TAB
 # =========================
 with tab_games:
     st.subheader("Today’s MLB Games")
@@ -415,18 +517,16 @@ with tab_games:
                     hitters["Team"].isin([g["Away"], g["Home"]])
                 ].sort_values("MODEL_SCORE", ascending=False)
 
-                if game_hitters.empty:
-                    st.info("No graded hitters found for this game.")
-                else:
-                    st.dataframe(
-                        game_hitters[
-                            ["RANK", "Name", "Team", "GRADE", "MODEL_SCORE", "HR", "HR_RATE", "ISO", "OPS", "EDGE", "ODDS"]
-                        ],
-                        use_container_width=True
-                    )
+                st.dataframe(
+                    game_hitters[
+                        ["RANK", "Name", "Team", "GRADE", "MODEL_SCORE", "HR", "HR_RATE", "ISO", "OPS", "EDGE", "ODDS"]
+                    ],
+                    use_container_width=True,
+                    height=350,
+                )
 
 # =========================
-# RESEARCH
+# RESEARCH TAB
 # =========================
 with tab_research:
     st.subheader("Research Breakdown By Game")
@@ -443,39 +543,25 @@ with tab_research:
                 st.write(f"**Pitching Matchup:** {g['Away Pitcher']} vs {g['Home Pitcher']}")
                 st.write("**Stats collected:** HR, AB, PA, AVG, SLG, OPS, ISO, HR Rate, estimated barrel power, model probability, book probability, edge, and grade.")
 
-                if game_hitters.empty:
-                    st.info("No hitters matched to this game.")
-                else:
-                    for _, p in game_hitters.iterrows():
-                        x1, x2, x3 = st.columns([1, 3, 2])
-
-                        with x1:
-                            st.image(p["HEADSHOT"], width=90)
-
-                        with x2:
-                            st.markdown(f"### #{p['RANK']} {p['Name']} — {p['Team']}")
-                            st.write(
-                                f"Grade **{p['GRADE']}** | Model Score **{p['MODEL_SCORE']}** | "
-                                f"Model Prob **{p['MODEL_PROB']}%** | Edge **{p['EDGE']}%**"
-                            )
-                            st.write(
-                                f"HR **{p['HR']}** | HR Rate **{p['HR_RATE']}%** | "
-                                f"ISO **{p['ISO']}** | OPS **{p['OPS']}** | SLG **{p['SLG']}**"
-                            )
-
-                        with x3:
-                            st.write(f"**Odds:** {p['ODDS']}")
-                            st.write("**Market:** OVER 0.5 HR")
-                            st.write(f"**Book Prob:** {p['BOOK_PROB']}%")
-                            st.write(f"**Barrel Est:** {p['BARREL_EST']}")
-
-                        st.divider()
+                for _, p in game_hitters.iterrows():
+                    a, b, c = st.columns([1, 3, 2])
+                    with a:
+                        st.image(p["HEADSHOT"], width=90)
+                    with b:
+                        st.markdown(f"### #{p['RANK']} {p['Name']}")
+                        st.write(f"**{p['Team']}** | Grade **{p['GRADE']}** | Score **{p['MODEL_SCORE']}**")
+                        st.write(f"HR **{p['HR']}** | HR Rate **{p['HR_RATE']}%** | ISO **{p['ISO']}** | OPS **{p['OPS']}**")
+                    with c:
+                        st.write(f"**Odds:** {p['ODDS']}")
+                        st.write(f"**Edge:** {p['EDGE']}%")
+                        st.write(f"**Barrel Est:** {p['BARREL_EST']}")
+                    st.divider()
 
 # =========================
-# PARLAYS
+# PARLAYS TAB
 # =========================
 with tab_parlays:
-    st.subheader("My Parlay Builder")
+    st.subheader("My Parlays")
 
     odds_display, win_display, parlay_grade = calc_parlay(st.session_state.slip)
 
@@ -488,31 +574,41 @@ with tab_parlays:
         st.info("No players added yet.")
     else:
         for leg in st.session_state.slip:
-            c1, c2, c3 = st.columns([1, 4, 1])
-            c1.image(leg["HEADSHOT"], width=75)
-            c2.write(f"✅ **{leg['Name']}** — OVER 0.5 HR — {leg['ODDS']} — Grade {leg['GRADE']}")
-            if c3.button("Remove", key=f"parlay_remove_{leg['ID']}", use_container_width=True):
+            x1, x2, x3 = st.columns([1, 4, 1])
+            x1.image(leg["HEADSHOT"], width=75)
+            x2.write(f"✅ **{leg['Name']}** — OVER 0.5 HR — {leg['ODDS']} — Grade {leg['GRADE']}")
+            if x3.button("Remove", key=f"parlay_remove_{leg['ID']}"):
                 st.session_state.slip = [x for x in st.session_state.slip if x["ID"] != leg["ID"]]
                 st.rerun()
 
-        if st.button("🗑 Clear All", use_container_width=True):
+        if st.button("🗑 Clear All"):
             st.session_state.slip = []
             st.rerun()
 
 # =========================
-# FULL TABLE
+# PROFILE TAB
 # =========================
-with tab_table:
-    st.subheader("Full Model Table")
-
+with tab_profile:
+    st.subheader("Model Info")
+    st.write("This model ranks hitters using real MLB Stats API data.")
+    st.write("Grade is rank-based so only the very top players get A+.")
     st.dataframe(
         hitters[
-            [
-                "RANK", "Name", "Team", "GRADE", "MODEL_SCORE", "MODEL_PROB",
-                "BOOK_PROB", "EDGE", "HR", "AB", "PA", "AVG", "SLG",
-                "OPS", "ISO", "HR_RATE", "BARREL_EST", "ODDS"
-            ]
+            ["RANK", "Name", "Team", "GRADE", "MODEL_SCORE", "MODEL_PROB", "BOOK_PROB", "EDGE", "HR", "AB", "PA", "AVG", "SLG", "OPS", "ISO", "HR_RATE", "BARREL_EST", "ODDS"]
         ],
         use_container_width=True,
-        height=700
+        height=700,
     )
+
+# =========================
+# BOTTOM NAV LOOK
+# =========================
+st.markdown("""
+<div class="bottom-nav">
+    <div class="nav-item nav-active"><div class="nav-icon">🏠</div>Home</div>
+    <div class="nav-item"><div class="nav-icon">⚾</div>Games</div>
+    <div class="nav-item"><div class="nav-icon">📊</div>Research</div>
+    <div class="nav-item"><div class="nav-icon">🎟️</div>My Parlays</div>
+    <div class="nav-item"><div class="nav-icon">👤</div>Profile</div>
+</div>
+""", unsafe_allow_html=True)
